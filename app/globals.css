@@ -1,0 +1,169 @@
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+
+  --background: #fef9ef;
+  --foreground: #1d1c16;
+
+  --surface: #fef9ef;
+  --surface-card: #f5f0e0;
+  --surface-soft: #faf5e8;
+  --surface-container: #f2ede4;
+  --surface-container-low: #f8f3e9;
+  --surface-container-high: #ece8de;
+  --surface-strong: #ebe6d6;
+
+  --body: #3a3a3a;
+  --muted: #6a6a6a;
+  --outline: #c4c7c7;
+  --hairline: #e5e5e5;
+
+  --primary: #1d1c16;
+  --primary-foreground: #ffffff;
+
+  --brand-mint: #a4d4c5;
+  --brand-peach: #ffb084;
+  --brand-pink: #ff4d8b;
+  --brand-coral: #ff6b5a;
+  --brand-ochre: #e8b94a;
+  --brand-lavender: #b8a4ed;
+
+  --success: #15803d;
+  --warning: #b45309;
+  --error: #dc2626;
+
+  --radius-card: 0.75rem;
+  --radius-control: 0.75rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-surface: var(--surface);
+  --color-surface-card: var(--surface-card);
+  --color-surface-soft: var(--surface-soft);
+  --color-surface-container: var(--surface-container);
+  --color-surface-container-low: var(--surface-container-low);
+  --color-surface-container-high: var(--surface-container-high);
+  --color-surface-strong: var(--surface-strong);
+
+  --color-body: var(--body);
+  --color-muted: var(--muted);
+  --color-outline: var(--outline);
+  --color-hairline: var(--hairline);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-brand-mint: var(--brand-mint);
+  --color-brand-peach: var(--brand-peach);
+  --color-brand-pink: var(--brand-pink);
+  --color-brand-coral: var(--brand-coral);
+  --color-brand-ochre: var(--brand-ochre);
+  --color-brand-lavender: var(--brand-lavender);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+
+  --font-sans: "Inter", Arial, sans-serif;
+
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Inter", Arial, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: var(--brand-mint);
+  color: var(--foreground);
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+@keyframes highlight-income {
+  0%, 100% {
+    box-shadow: inset 0 0 0 1px rgb(16 185 129 / 20%);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1px rgb(16 185 129 / 65%);
+  }
+}
+
+@keyframes highlight-expense {
+  0%, 100% {
+    box-shadow: inset 0 0 0 1px rgb(239 68 68 / 20%);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1px rgb(239 68 68 / 65%);
+  }
+}
+
+@keyframes highlight-transfer {
+  0%, 100% {
+    box-shadow: inset 0 0 0 1px rgb(59 130 246 / 20%);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1px rgb(59 130 246 / 65%);
+  }
+}
+
+.animate-highlight-income {
+  animation: highlight-income 1.2s ease-in-out infinite;
+}
+
+.animate-highlight-expense {
+  animation: highlight-expense 1.2s ease-in-out infinite;
+}
+
+.animate-highlight-transfer {
+  animation: highlight-transfer 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-highlight-income,
+  .animate-highlight-expense,
+  .animate-highlight-transfer {
+    animation: none;
+    box-shadow: inset 0 0 0 1px rgb(107 114 128 / 45%);
+  }
+}
