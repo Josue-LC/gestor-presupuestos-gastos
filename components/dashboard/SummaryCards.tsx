@@ -1,5 +1,28 @@
 
-import { dashboardSummary } from "@/lib/dashboard-data";
+"use client";
+
+import { useEffect, useState } from "react";
+
+import { getActiveAccounts } from "@/services/account.service";
+
+import {
+  getAccountModuleSummary,
+  getAccountMovementSummary,
+} from "@/services/account-summary.service";
+
+// -----------------------------------------------------------------------------
+// TIPOS
+// -----------------------------------------------------------------------------
+
+interface SummaryData {
+  availableBalance: number;
+  monthlyIncome: number;
+  monthlyExpenses: number;
+}
+
+// -----------------------------------------------------------------------------
+// UTILIDADES
+// -----------------------------------------------------------------------------
 
 const currencyFormatter = new Intl.NumberFormat("es-MX", {
   style: "currency",
@@ -12,9 +35,98 @@ function formatCurrency(amount: number) {
   return currencyFormatter.format(amount);
 }
 
+function getLocalDateString(date: Date = new Date()): string {
+  const offset = date.getTimezoneOffset() * 60_000;
+
+  return new Date(date.getTime() - offset)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function getInitialSummary(): SummaryData {
+  return {
+    availableBalance: 0,
+    monthlyIncome: 0,
+    monthlyExpenses: 0,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// COMPONENTE
+// -----------------------------------------------------------------------------
+
 export default function SummaryCards() {
-  const { availableBalance, monthlyIncome, monthlyExpenses } =
-    dashboardSummary;
+  const [summary, setSummary] = useState<SummaryData>(
+    getInitialSummary,
+  );
+
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    function loadSummary() {
+      try {
+        const today = getLocalDateString();
+        const currentDate = new Date(`${today}T12:00:00`);
+
+        const firstDay = new Date(
+          currentDate.getFullYear(),
+          currentDate.getMonth(),
+          1,
+        );
+
+        const startDate = getLocalDateString(firstDay);
+
+        // Saldo actual de todas las cuentas activas.
+        const accountSummary = getAccountModuleSummary(today);
+
+        // Ingresos y gastos registrados durante el mes actual.
+        const activeAccounts = getActiveAccounts();
+
+        const monthlyMovements = activeAccounts.reduce(
+          (totals, account) => {
+            const movements = getAccountMovementSummary(
+              account.id,
+              {
+                startDate,
+                endDate: today,
+                asOfDate: today,
+              },
+            );
+
+            totals.income += movements.income;
+            totals.expenses += movements.expenses;
+
+            return totals;
+          },
+          {
+            income: 0,
+            expenses: 0,
+          },
+        );
+
+        setSummary({
+          availableBalance: accountSummary.totalAccountsBalance,
+          monthlyIncome: monthlyMovements.income,
+          monthlyExpenses: monthlyMovements.expenses,
+        });
+      } catch (error) {
+        console.error(
+          "Error al cargar el resumen financiero:",
+          error,
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    loadSummary();
+  }, []);
+
+  const {
+    availableBalance,
+    monthlyIncome,
+    monthlyExpenses,
+  } = summary;
 
   return (
     <section
@@ -53,11 +165,11 @@ export default function SummaryCards() {
 
         <div className="relative z-10">
           <p className="break-words text-3xl font-bold tracking-tight text-foreground sm:text-4xl lg:text-5xl">
-            {formatCurrency(availableBalance)}
+            {isLoading ? "Cargando..." : formatCurrency(availableBalance)}
           </p>
 
           <p className="mt-3 text-xs text-muted">
-            Importe ilustrativo · Datos de demostración
+            Saldo actual de tus cuentas activas
           </p>
         </div>
 
@@ -92,11 +204,11 @@ export default function SummaryCards() {
           </div>
 
           <p className="mt-4 text-2xl font-bold tracking-tight text-foreground">
-            {formatCurrency(monthlyIncome)}
+            {isLoading ? "Cargando..." : formatCurrency(monthlyIncome)}
           </p>
 
           <p className="mt-2 text-xs text-body">
-            Según los datos de demostración
+            Ingresos registrados este mes
           </p>
         </article>
 
@@ -124,11 +236,11 @@ export default function SummaryCards() {
           </div>
 
           <p className="mt-4 text-2xl font-bold tracking-tight text-foreground">
-            {formatCurrency(monthlyExpenses)}
+            {isLoading ? "Cargando..." : formatCurrency(monthlyExpenses)}
           </p>
 
           <p className="mt-2 text-xs text-body">
-            Según los datos de demostración
+            Gastos registrados este mes
           </p>
         </article>
       </div>

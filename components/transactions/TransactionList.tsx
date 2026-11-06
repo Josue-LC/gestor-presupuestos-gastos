@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -52,6 +51,8 @@ interface TransactionListProps {
   highlightedTransactionId?: string | null;
 }
 
+import { getAccounts } from "@/services/account.service";
+
 const typeLabels: Record<TransactionType, string> = {
   income: "Ingreso",
   expense: "Gasto",
@@ -98,6 +99,36 @@ const categoryLabels: Record<string, string> = {
   refunds: "Reembolsos",
   "other-income": "Otros",
 };
+
+/**
+ * Convierte fechas ISO (YYYY-MM-DD) a formato legible.
+ * Se construye la fecha con componentes locales para evitar
+ * desfases ocasionados por la zona horaria.
+ *
+ * Si recibe una fecha antigua que no está en formato ISO,
+ * conserva su representación original.
+ */
+function formatTransactionDate(date: string): string {
+  const isoDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+
+  if (!isoDateMatch) {
+    return date;
+  }
+
+  const [, year, month, day] = isoDateMatch;
+
+  const parsedDate = new Date(Number(year), Number(month) - 1, Number(day));
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return date;
+  }
+
+  return new Intl.DateTimeFormat("es-MX", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsedDate);
+}
 
 function getCategoryId(transaction: Transaction): string | null {
   if (transaction.type === "transfer") {
@@ -208,6 +239,29 @@ function CategoryIcon({ transaction }: { transaction: Transaction }) {
   );
 }
 
+function getAccountName(accountId: string): string {
+  const accounts = getAccounts();
+
+  const account = accounts.find((item) => item.id === accountId);
+
+  return account?.name ?? "Cuenta no encontrada";
+}
+
+function formatTransactionAccount(account: string): string {
+  if (account.includes(" → ")) {
+    const [sourceAccountId, destinationAccountId] = account
+      .split(" → ")
+      .map((value) => value.trim());
+
+    const sourceName = getAccountName(sourceAccountId);
+    const destinationName = getAccountName(destinationAccountId);
+
+    return `${sourceName} → ${destinationName}`;
+  }
+
+  return getAccountName(account);
+}
+
 export default function TransactionList({
   transactions,
   onEdit,
@@ -299,20 +353,24 @@ export default function TransactionList({
 
               <div className="hidden min-w-0 md:block">
                 <p className="truncate text-sm text-body">
-                  {transaction.account}
+                  {formatTransactionAccount(transaction.account)}{" "}
                 </p>
               </div>
 
               <div className="hidden md:block">
-                <p className="text-sm text-muted">{transaction.date}</p>
+                <p className="text-sm text-muted">
+                  {formatTransactionDate(transaction.date)}
+                </p>
               </div>
 
               <div className="flex items-center justify-between gap-3 md:block md:text-right">
                 <div className="min-w-0 md:hidden">
                   <p className="truncate text-xs text-muted">
-                    {transaction.account}
+                    {formatTransactionAccount(transaction.account)}{" "}
                   </p>
-                  <p className="text-xs text-muted">{transaction.date}</p>
+                  <p className="text-xs text-muted">
+                    {formatTransactionDate(transaction.date)}
+                  </p>
                 </div>
 
                 <p

@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -85,10 +84,7 @@ export default function TransactionsPage() {
           })),
       ]);
     } catch (error) {
-      console.error(
-        "No fue posible cargar las cuentas y tarjetas:",
-        error,
-      );
+      console.error("No fue posible cargar las cuentas y tarjetas:", error);
 
       setAccountOptions([]);
       setDestinationAccountOptions([]);
@@ -182,8 +178,7 @@ export default function TransactionsPage() {
         transaction.account.split(" → ").includes(filters.account);
 
       const matchesCategory =
-        filters.category === "all" ||
-        transaction.category === filters.category;
+        filters.category === "all" || transaction.category === filters.category;
 
       const transactionStatus =
         transaction.status === "cancelled" ? "cancelled" : "active";
@@ -267,11 +262,7 @@ export default function TransactionsPage() {
       ...data,
       registeredAt: new Date().toISOString(),
       status: "active",
-      date: new Date(`${data.date}T12:00:00`).toLocaleDateString("es-MX", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      }),
+      date: data.date,
     };
 
     const auditEvent = createTransactionAuditEvent(newTransaction);
@@ -301,11 +292,7 @@ export default function TransactionsPage() {
       ...editingTransaction,
       ...data,
       status: "active",
-      date: new Date(`${data.date}T12:00:00`).toLocaleDateString("es-MX", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      }),
+      date: data.date,
     };
 
     const auditEvent = createTransactionUpdateAuditEvent(
@@ -419,9 +406,7 @@ export default function TransactionsPage() {
     setAuditEvents((current) => [auditEvent, ...current]);
 
     setSelectedTransaction((current) =>
-      current?.id === transactionToCancel.id
-        ? cancelledTransaction
-        : current,
+      current?.id === transactionToCancel.id ? cancelledTransaction : current,
     );
 
     setTransactionToCancel(null);
@@ -701,9 +686,7 @@ export default function TransactionsPage() {
           destinationAccounts={destinationAccountOptions}
           transaction={editingTransaction}
           onSubmit={
-            editingTransaction
-              ? handleEditTransaction
-              : handleCreateTransaction
+            editingTransaction ? handleEditTransaction : handleCreateTransaction
           }
           onCancel={closeForm}
         />
@@ -751,10 +734,9 @@ export default function TransactionsPage() {
             </h2>
 
             <p className="mt-2 text-sm leading-6 text-muted">
-              Vas a cancelar{" "}
-              <strong>{transactionToCancel.description}</strong>. El movimiento
-              permanecerá en el historial, pero dejará de considerarse en los
-              indicadores financieros.
+              Vas a cancelar <strong>{transactionToCancel.description}</strong>.
+              El movimiento permanecerá en el historial, pero dejará de
+              considerarse en los indicadores financieros.
             </p>
 
             <label
