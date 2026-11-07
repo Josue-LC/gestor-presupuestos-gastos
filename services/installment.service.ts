@@ -1,17 +1,42 @@
-// installment service
-import type { Installment, InstallmentPlan } from "@/types/account";
+import type {
+  Installment,
+  InstallmentInterestType,
+  InstallmentPlan,
+} from "@/types/account";
 
 import {
   loadAccountStorage,
   saveAccountStorage,
 } from "@/services/account-storage.service";
 
+// -----------------------------------------------------------------------------
+// TIPOS
+// -----------------------------------------------------------------------------
+
 export interface CreateInstallmentPlanData {
   purchaseId: string;
 }
 
+interface InstallmentAmounts {
+  principalAmount: number;
+  interestAmount: number;
+  amount: number;
+}
+
+// -----------------------------------------------------------------------------
+// UTILIDADES
+// -----------------------------------------------------------------------------
+
 function generateId(): string {
   return crypto.randomUUID();
+}
+
+function roundMoney(amount: number): number {
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+function toCents(amount: number): number {
+  return Math.round(amount * 100);
 }
 
 function isValidDate(date: string): boolean {
@@ -54,50 +79,256 @@ function addMonthsClamped(date: string, months: number): string {
   ].join("-");
 }
 
-function roundMoney(amount: number): number {
-  return Math.round((amount + Number.EPSILON) * 100) / 100;
+function isValidMoney(amount: number): boolean {
+  return (
+    Number.isFinite(amount) &&
+    amount > 0 &&
+    Math.abs(amount * 100 - Math.round(amount * 100)) < 0.000001
+  );
 }
 
-function calculateInstallmentAmounts(
-  totalAmount: number,
+function isNonNegativeMoney(amount: number): boolean {
+  return (
+    Number.isFinite(amount) &&
+    amount >= 0 &&
+    Math.abs(amount * 100 - Math.round(amount * 100)) < 0.000001
+  );
+}
+
+// -----------------------------------------------------------------------------
+// CÁLCULO DE PARCIALIDADES IGUALES
+// -----------------------------------------------------------------------------
+
+function calculateEqualInstallments(
+  principalAmount: number,
+  interestAmount: number,
   installmentCount: number,
-): number[] {
-  const totalCents = Math.round(totalAmount * 100);
+): InstallmentAmounts[] {
+  const principalCents = toCents(principalAmount);
+  const interestCents = toCents(interestAmount);
 
-  if (
-    !Number.isSafeInteger(totalCents) ||
-    !Number.isInteger(installmentCount) ||
-    installmentCount < 1 ||
-    installmentCount > totalCents
-  ) {
-    throw new Error(
-      "La cantidad de parcialidades no es válida para el importe de la compra.",
-    );
-  }
+  const totalCents = principalCents + interestCents;
 
-  const baseAmount = Math.floor(totalCents / installmentCount);
-  const remainder = totalCents % installmentCount;
+  const baseCents = Math.floor(totalCents / installmentCount);
+  const remainderCents = totalCents % installmentCount;
+
+  const principalBase = Math.floor(principalCents / installmentCount);
+
+  const principalRemainder = principalCents % installmentCount;
 
   return Array.from({ length: installmentCount }, (_, index) => {
-    const cents = baseAmount + (index < remainder ? 1 : 0);
+    const principalCentsForInstallment =
+      principalBase + (index < principalRemainder ? 1 : 0);
 
-    return cents / 100;
+    const amountCents = baseCents + (index < remainderCents ? 1 : 0);
+
+    const interestCentsForInstallment =
+      amountCents - principalCentsForInstallment;
+
+    return {
+      principalAmount: principalCentsForInstallment / 100,
+      interestAmount: interestCentsForInstallment / 100,
+      amount: amountCents / 100,
+    };
   });
 }
+
+// -----------------------------------------------------------------------------
+// AMORTIZACIÓN FRANCESA
+// -----------------------------------------------------------------------------
+
+/**
+ * Genera un calendario de amortización francesa.
+ *
+ * La mensualidad se mantiene constante, mientras que:
+ * - Los intereses disminuyen.
+ * - El capital amortizado aumenta.
+ * - El último pago absorbe los ajustes de redondeo.
+ */
+function calculateFrenchAmortization(
+  principalAmount: number,
+  annualInterestRate: number,
+  installmentCount: number,
+): InstallmentAmounts[] {
+  const monthlyRate = annualInterestRate / 100 / 12;
+
+  if (monthlyRate <= 0) {
+    return calculateEqualInstallments(principalAmount, 0, installmentCount);
+  }
+
+  const principalCents = toCents(principalAmount);
+  const principal = principalCents / 100;
+
+  const discountFactor = Math.pow(1 + monthlyRate, -installmentCount);
+
+  const monthlyPayment = (principal * monthlyRate) / (1 - discountFactor);
+
+  if (!Number.isFinite(monthlyPayment) || monthlyPayment <= 0) {
+    throw new Error("No fue posible calcular la mensualidad.");
+  }
+
+  let outstandingPrincipal = principalCents;
+
+  const result: InstallmentAmounts[] = [];
+
+  for (let index = 0; index < installmentCount; index++) {
+    const isLastInstallment = index === installmentCount - 1;
+
+    const interestCents = Math.round(outstandingPrincipal * monthlyRate);
+
+    let principalCentsForInstallment: number;
+
+    if (isLastInstallment) {
+      principalCentsForInstallment = outstandingPrincipal;
+    } else {
+      const paymentCents = Math.round(monthlyPayment * 100);
+
+      principalCentsForInstallment = Math.min(
+        outstandingPrincipal,
+        paymentCents - interestCents,
+      );
+    }
+
+    if (principalCentsForInstallment <= 0) {
+      throw new Error(
+        "La tasa de interés genera una mensualidad insuficiente para amortizar el capital.",
+      );
+    }
+
+    const amountCents = principalCentsForInstallment + interestCents;
+
+    result.push({
+      principalAmount: principalCentsForInstallment / 100,
+      interestAmount: interestCents / 100,
+      amount: amountCents / 100,
+    });
+
+    outstandingPrincipal -= principalCentsForInstallment;
+  }
+
+  if (outstandingPrincipal !== 0) {
+    throw new Error("No fue posible liquidar el capital al finalizar el plan.");
+  }
+
+  return result;
+}
+
+// -----------------------------------------------------------------------------
+// ESTADOS
+// -----------------------------------------------------------------------------
 
 function getInstallmentStatus(
   amount: number,
   paidAmount: number,
 ): Installment["status"] {
-  if (paidAmount >= amount) {
-    return "paid";
-  }
-
-  if (paidAmount > 0) {
-    return "partial";
-  }
+  if (paidAmount >= amount) return "paid";
+  if (paidAmount > 0) return "partial";
 
   return "pending";
+}
+
+// -----------------------------------------------------------------------------
+// VALIDACIONES
+// -----------------------------------------------------------------------------
+
+function validateInstallmentCount(installmentCount: number): void {
+  if (
+    !Number.isInteger(installmentCount) ||
+    installmentCount < 2 ||
+    installmentCount > 120
+  ) {
+    throw new Error("El número de parcialidades debe estar entre 2 y 120.");
+  }
+}
+
+function validateInterestConfiguration(
+  interestType: InstallmentInterestType,
+  interestAmount: number,
+  annualInterestRate: number | null,
+): void {
+  if (!isNonNegativeMoney(interestAmount)) {
+    throw new Error("El importe de intereses no es válido.");
+  }
+
+  if (interestType === "none") {
+    if (interestAmount !== 0 || annualInterestRate !== null) {
+      throw new Error(
+        "Una compra sin intereses no debe contener una tasa anual ni intereses fijos.",
+      );
+    }
+
+    return;
+  }
+
+  if (interestType === "fixed") {
+    if (!isValidMoney(interestAmount)) {
+      throw new Error("El importe de intereses fijos debe ser mayor que cero.");
+    }
+
+    if (annualInterestRate !== null) {
+      throw new Error(
+        "Una compra con interés fijo no debe incluir una tasa anual.",
+      );
+    }
+
+    return;
+  }
+
+  if (interestType === "annual_rate") {
+    if (
+      interestAmount !== 0 ||
+      annualInterestRate === null ||
+      !Number.isFinite(annualInterestRate) ||
+      annualInterestRate <= 0 ||
+      annualInterestRate > 1000
+    ) {
+      throw new Error(
+        "La tasa anual debe ser mayor a 0 y menor o igual a 1000%.",
+      );
+    }
+
+    return;
+  }
+
+  throw new Error("El tipo de interés no es válido.");
+}
+
+// -----------------------------------------------------------------------------
+// CALCULAR PLAN
+// -----------------------------------------------------------------------------
+
+function calculatePlanAmounts(
+  principalAmount: number,
+  interestType: InstallmentInterestType,
+  interestAmount: number,
+  annualInterestRate: number | null,
+  installmentCount: number,
+): InstallmentAmounts[] {
+  if (interestType === "none") {
+    return calculateEqualInstallments(principalAmount, 0, installmentCount);
+  }
+
+  if (interestType === "fixed") {
+    return calculateEqualInstallments(
+      principalAmount,
+      interestAmount,
+      installmentCount,
+    );
+  }
+
+  if (interestType === "annual_rate") {
+    if (annualInterestRate === null) {
+      throw new Error("No se encontró la tasa anual del plan.");
+    }
+
+    return calculateFrenchAmortization(
+      principalAmount,
+      annualInterestRate,
+      installmentCount,
+    );
+  }
+
+  throw new Error("El tipo de interés no es válido.");
 }
 
 // -----------------------------------------------------------------------------
@@ -147,6 +378,7 @@ export function getInstallmentById(
     (installment) => installment.id === installmentId,
   );
 }
+
 export function getPendingInstallments(): Installment[] {
   return getInstallments().filter(
     (installment) => installment.status === "pending",
@@ -172,7 +404,7 @@ export function getInstallmentRemainingAmount(
 }
 
 // -----------------------------------------------------------------------------
-// CREACIÓN DE PLANES MSI
+// CREACIÓN DE PLANES
 // -----------------------------------------------------------------------------
 
 export function createInstallmentPlan(
@@ -197,33 +429,29 @@ export function createInstallmentPlan(
   }
 
   if (purchase.purchaseType !== "installments") {
-    throw new Error("La compra no está registrada como meses sin intereses.");
+    throw new Error(
+      "La compra no está configurada para pagarse en parcialidades.",
+    );
   }
 
   if (
     purchase.installmentPlanId !== null ||
     storage.installmentPlans.some((plan) => plan.cardPurchaseId === purchase.id)
   ) {
-    throw new Error("Esta compra ya tiene un plan de parcialidades asociado.");
+    throw new Error("Esta compra ya tiene un plan asociado.");
   }
 
   const installmentCount = purchase.installmentCount;
   const firstDueDate = purchase.firstDueDate;
 
-  if (
-    installmentCount === null ||
-    !Number.isInteger(installmentCount) ||
-    installmentCount < 2
-  ) {
-    throw new Error(
-      "La compra MSI debe tener al menos 2 parcialidades configuradas.",
-    );
+  if (installmentCount === null) {
+    throw new Error("La compra no tiene un número de parcialidades.");
   }
 
+  validateInstallmentCount(installmentCount);
+
   if (!firstDueDate || !isValidDate(firstDueDate)) {
-    throw new Error(
-      "La compra MSI debe tener una fecha de primera parcialidad válida.",
-    );
+    throw new Error("La fecha de la primera parcialidad no es válida.");
   }
 
   if (!isValidDate(purchase.purchaseDate)) {
@@ -236,13 +464,58 @@ export function createInstallmentPlan(
     );
   }
 
-  if (
-    !Number.isFinite(purchase.amount) ||
-    purchase.amount <= 0 ||
-    roundMoney(purchase.amount) !== purchase.amount ||
-    !Number.isSafeInteger(Math.round(purchase.amount * 100))
-  ) {
+  if (!isValidMoney(purchase.amount)) {
     throw new Error("El importe de la compra no es válido.");
+  }
+
+  const interestType = purchase.interestType ?? "none";
+
+  const interestAmount = purchase.interestAmount ?? 0;
+
+  const annualInterestRate = purchase.annualInterestRate ?? null;
+
+  validateInterestConfiguration(
+    interestType,
+    interestAmount,
+    annualInterestRate,
+  );
+
+  // Calcular capital, intereses y total de cada parcialidad.
+  const amounts = calculatePlanAmounts(
+    purchase.amount,
+    interestType,
+    interestAmount,
+    annualInterestRate,
+    installmentCount,
+  );
+
+  const principalTotal = roundMoney(
+    amounts.reduce((total, item) => total + item.principalAmount, 0),
+  );
+
+  const interestTotal = roundMoney(
+    amounts.reduce((total, item) => total + item.interestAmount, 0),
+  );
+
+  const totalAmount = roundMoney(principalTotal + interestTotal);
+
+  if (principalTotal !== roundMoney(purchase.amount)) {
+    throw new Error(
+      "El capital amortizado no coincide con el importe original.",
+    );
+  }
+
+  if (interestType === "none" && interestTotal !== 0) {
+    throw new Error("Un plan sin intereses no puede generar intereses.");
+  }
+
+  if (
+    interestType === "fixed" &&
+    interestTotal !== roundMoney(interestAmount)
+  ) {
+    throw new Error(
+      "El interés calculado no coincide con el importe fijo configurado.",
+    );
   }
 
   const planId = generateId();
@@ -251,24 +524,31 @@ export function createInstallmentPlan(
   const plan: InstallmentPlan = {
     id: planId,
     cardPurchaseId: purchase.id,
-    totalAmount: purchase.amount,
+
+    principalAmount: principalTotal,
+    interestAmount: interestTotal,
+    totalAmount,
+
+    interestType,
+    annualInterestRate,
+
     installmentCount,
     firstDueDate,
+
     status: "active",
     createdAt,
   };
 
-  const amounts = calculateInstallmentAmounts(
-    purchase.amount,
-    installmentCount,
-  );
-
-  const installments: Installment[] = amounts.map((amount, index) => ({
+  const installments: Installment[] = amounts.map((item, index) => ({
     id: generateId(),
     planId,
     installmentNumber: index + 1,
     dueDate: addMonthsClamped(firstDueDate, index),
-    amount,
+
+    principalAmount: item.principalAmount,
+    interestAmount: item.interestAmount,
+    amount: item.amount,
+
     paidAmount: 0,
     status: "pending",
     payments: [],
@@ -282,10 +562,13 @@ export function createInstallmentPlan(
 
   const updatedStorage = {
     ...storage,
+
     purchases: storage.purchases.map((item) =>
       item.id === purchase.id ? updatedPurchase : item,
     ),
+
     installmentPlans: [...storage.installmentPlans, plan],
+
     installments: [...storage.installments, ...installments],
   };
 
@@ -307,21 +590,22 @@ export function getPlanOutstandingAmount(planId: string): number {
     return 0;
   }
 
-  const outstanding = getInstallmentsByPlan(planId).reduce(
-    (total, installment) => total + getInstallmentRemainingAmount(installment),
-    0,
+  return roundMoney(
+    getInstallmentsByPlan(planId).reduce(
+      (total, installment) =>
+        total + getInstallmentRemainingAmount(installment),
+      0,
+    ),
   );
-
-  return roundMoney(outstanding);
 }
 
 export function getPlanPaidAmount(planId: string): number {
-  const total = getInstallmentsByPlan(planId).reduce(
-    (sum, installment) => sum + installment.paidAmount,
-    0,
+  return roundMoney(
+    getInstallmentsByPlan(planId).reduce(
+      (sum, installment) => sum + installment.paidAmount,
+      0,
+    ),
   );
-
-  return roundMoney(total);
 }
 
 export function getPlanProgress(planId: string): number {
@@ -331,9 +615,10 @@ export function getPlanProgress(planId: string): number {
     return 0;
   }
 
-  const paidAmount = getPlanPaidAmount(planId);
-
-  return Math.min(100, Math.round((paidAmount / plan.totalAmount) * 100));
+  return Math.min(
+    100,
+    Math.round((getPlanPaidAmount(planId) / plan.totalAmount) * 100),
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -341,12 +626,8 @@ export function getPlanProgress(planId: string): number {
 // -----------------------------------------------------------------------------
 
 /**
- * La cancelación de un plan MSI debe coordinarse con la cancelación de su
- * compra y de la transacción financiera relacionada.
- *
- * Utiliza cancelCardPurchase() desde card-purchase.service.ts. Esta función
- * se conserva temporalmente para ofrecer un error explícito a cualquier
- * consumidor anterior y evitar una cancelación parcial del estado financiero.
+ * La cancelación debe coordinarse con la compra y la transacción relacionada.
+ * Utiliza cancelCardPurchase() desde card-purchase.service.ts.
  *
  * @deprecated Utiliza cancelCardPurchase(purchaseId).
  */
@@ -364,6 +645,6 @@ export function cancelInstallmentPlan(planId: string): InstallmentPlan {
   }
 
   throw new Error(
-    "La cancelación de un plan MSI debe realizarse junto con su compra y transacción. Utiliza cancelCardPurchase() con el ID de la compra asociada.",
+    "La cancelación debe realizarse junto con su compra y transacción. Utiliza cancelCardPurchase() con el ID de la compra asociada.",
   );
 }

@@ -1,9 +1,15 @@
-
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import type { BankCard } from "@/types/account";
-import type { CreateCardPurchaseData } from "@/services/card-purchase.service";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+
+import type {
+  BankCard,
+  InstallmentInterestType,
+} from "@/types/account";
+
+import type {
+  CreateCardPurchaseData,
+} from "@/services/card-purchase.service";
 
 interface CardPurchaseFormProps {
   card: BankCard;
@@ -12,8 +18,9 @@ interface CardPurchaseFormProps {
   isSubmitting?: boolean;
 }
 
-function getLocalDate() {
+function getLocalDate(): string {
   const date = new Date();
+
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
@@ -56,8 +63,6 @@ function getSuggestedFirstDueDate(
 ): string {
   const [year, month, day] = purchaseDate.split("-").map(Number);
 
-  // Compra en o antes del corte: siguiente ciclo.
-  // Compra después del corte: ciclo posterior.
   const monthsToAdd = day <= cutoffDay ? 1 : 2;
 
   const targetDate = new Date(
@@ -71,6 +76,93 @@ function getSuggestedFirstDueDate(
     targetDate.getMonth(),
     paymentDueDay,
   );
+}
+
+function roundMoney(amount: number): number {
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+function calculatePreview(
+  principal: number,
+  count: number,
+  interestType: InstallmentInterestType,
+  fixedInterest: number,
+  annualRate: number,
+): {
+  monthlyPayment: number;
+  totalInterest: number;
+  totalAmount: number;
+} {
+  if (
+    !Number.isFinite(principal) ||
+    principal <= 0 ||
+    !Number.isInteger(count) ||
+    count < 2
+  ) {
+    return {
+      monthlyPayment: 0,
+      totalInterest: 0,
+      totalAmount: 0,
+    };
+  }
+
+  if (interestType === "none") {
+    return {
+      monthlyPayment: roundMoney(principal / count),
+      totalInterest: 0,
+      totalAmount: principal,
+    };
+  }
+
+  if (interestType === "fixed") {
+    if (!Number.isFinite(fixedInterest) || fixedInterest <= 0) {
+      return {
+        monthlyPayment: 0,
+        totalInterest: 0,
+        totalAmount: 0,
+      };
+    }
+
+    const normalizedInterest = roundMoney(fixedInterest);
+    const totalAmount = roundMoney(principal + normalizedInterest);
+
+    return {
+      monthlyPayment: roundMoney(totalAmount / count),
+      totalInterest: normalizedInterest,
+      totalAmount,
+    };
+  }
+
+  if (
+    !Number.isFinite(annualRate) ||
+    annualRate <= 0 ||
+    annualRate > 1000
+  ) {
+    return {
+      monthlyPayment: 0,
+      totalInterest: 0,
+      totalAmount: 0,
+    };
+  }
+
+  const monthlyRate = annualRate / 100 / 12;
+  const discountFactor = Math.pow(1 + monthlyRate, -count);
+
+  // Fórmula de amortización francesa en una forma
+  // numéricamente más estable.
+  const monthlyPayment = roundMoney(
+    (principal * monthlyRate) / (1 - discountFactor),
+  );
+
+  // La vista previa es aproximada. El servicio calcula cada periodo
+  // y corrige el redondeo de la última mensualidad.
+  const totalAmount = roundMoney(monthlyPayment * count);
+
+  return {
+    monthlyPayment,
+    totalInterest: roundMoney(totalAmount - principal),
+    totalAmount,
+  };
 }
 
 export default function CardPurchaseForm({
@@ -92,6 +184,13 @@ export default function CardPurchaseForm({
 
   const [installmentCount, setInstallmentCount] = useState("3");
   const [firstDueDate, setFirstDueDate] = useState("");
+
+  const [interestType, setInterestType] =
+    useState<InstallmentInterestType>("none");
+
+  const [interestAmount, setInterestAmount] = useState("");
+  const [annualInterestRate, setAnnualInterestRate] = useState("");
+
   const [error, setError] = useState("");
 
   const isCreditCard = card.type === "credit";
@@ -102,8 +201,6 @@ export default function CardPurchaseForm({
     card.paymentDueDay !== null &&
     card.paymentDueDay !== undefined;
 
-  // Actualizar la fecha sugerida cuando cambie la compra
-  // o se active la modalidad de meses sin intereses.
   useEffect(() => {
     if (
       !isCreditCard ||
@@ -114,13 +211,13 @@ export default function CardPurchaseForm({
       return;
     }
 
-    const suggestedDate = getSuggestedFirstDueDate(
-      purchaseDate,
-      card.cutoffDay!,
-      card.paymentDueDay!,
+    setFirstDueDate(
+      getSuggestedFirstDueDate(
+        purchaseDate,
+        card.cutoffDay!,
+        card.paymentDueDay!,
+      ),
     );
-
-    setFirstDueDate(suggestedDate);
   }, [
     isCreditCard,
     purchaseType,
@@ -130,11 +227,30 @@ export default function CardPurchaseForm({
     card.paymentDueDay,
   ]);
 
+  const preview = useMemo(() => {
+    return calculatePreview(
+      Number(amount),
+      Number(installmentCount),
+      interestType,
+      Number(interestAmount),
+      Number(annualInterestRate),
+    );
+  }, [
+    amount,
+    installmentCount,
+    interestType,
+    interestAmount,
+    annualInterestRate,
+  ]);
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
 
     const numericAmount = Number(amount);
+    const numericInterest = Number(interestAmount);
+    const numericRate = Number(annualInterestRate);
+    const numericCount = Number(installmentCount);
 
     if (!description.trim()) {
       setError("Ingresa una descripción para la compra.");
@@ -146,34 +262,58 @@ export default function CardPurchaseForm({
       return;
     }
 
-    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
-      setError("Ingresa un importe válido mayor a cero.");
-      return;
-    }
-
-    if (!purchaseDate) {
-      setError("Selecciona la fecha de compra.");
-      return;
-    }
-
     if (
-      purchaseType === "installments" &&
-      isCreditCard &&
-      Number(installmentCount) < 2
+      !Number.isFinite(numericAmount) ||
+      numericAmount <= 0 ||
+      Math.round(numericAmount * 100) !== numericAmount * 100
     ) {
-      setError("El número de parcialidades debe ser como mínimo 2.");
+      setError("Ingresa un importe válido con máximo dos decimales.");
       return;
     }
 
-    if (
-      purchaseType === "installments" &&
-      isCreditCard &&
-      (!firstDueDate || firstDueDate <= purchaseDate)
-    ) {
-      setError(
-        "La primera parcialidad debe ser posterior a la fecha de compra.",
-      );
+    if (!purchaseDate || purchaseDate > today) {
+      setError("Selecciona una fecha de compra válida.");
       return;
+    }
+
+    if (isCreditCard && purchaseType === "installments") {
+      if (
+        !Number.isInteger(numericCount) ||
+        numericCount < 2 ||
+        numericCount > 120
+      ) {
+        setError("El número de parcialidades debe estar entre 2 y 120.");
+        return;
+      }
+
+      if (!firstDueDate || firstDueDate <= purchaseDate) {
+        setError(
+          "La primera parcialidad debe ser posterior a la fecha de compra.",
+        );
+        return;
+      }
+
+      if (interestType === "fixed") {
+        if (
+          !Number.isFinite(numericInterest) ||
+          numericInterest <= 0 ||
+          Math.round(numericInterest * 100) !== numericInterest * 100
+        ) {
+          setError("Ingresa un importe de intereses válido.");
+          return;
+        }
+      }
+
+      if (interestType === "annual_rate") {
+        if (
+          !Number.isFinite(numericRate) ||
+          numericRate <= 0 ||
+          numericRate > 1000
+        ) {
+          setError("Ingresa una tasa anual mayor a 0 y hasta 1000%.");
+          return;
+        }
+      }
     }
 
     onSubmit({
@@ -183,10 +323,16 @@ export default function CardPurchaseForm({
       amount: numericAmount,
       purchaseDate,
       purchaseType: isCreditCard ? purchaseType : "single",
+
       ...(isCreditCard && purchaseType === "installments"
         ? {
-            installmentCount: Number(installmentCount),
+            installmentCount: numericCount,
             firstDueDate,
+            interestType,
+            interestAmount:
+              interestType === "fixed" ? roundMoney(numericInterest) : 0,
+            annualInterestRate:
+              interestType === "annual_rate" ? numericRate : null,
           }
         : {}),
     });
@@ -198,15 +344,17 @@ export default function CardPurchaseForm({
   const labelClassName =
     "mb-1.5 block text-sm font-medium text-foreground";
 
+  const formatCurrency = (value: number) =>
+    value.toLocaleString("es-MX", {
+      style: "currency",
+      currency: "MXN",
+    });
+
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
       <div>
         <p className="text-sm text-muted">Tarjeta seleccionada</p>
-
-        <p className="mt-1 font-semibold text-foreground">
-          {card.name}
-        </p>
-
+        <p className="mt-1 font-semibold text-foreground">{card.name}</p>
         <p className="text-xs text-muted">
           {isCreditCard ? "Tarjeta de crédito" : "Tarjeta de débito"}
         </p>
@@ -214,7 +362,6 @@ export default function CardPurchaseForm({
 
       <div>
         <label className={labelClassName}>Descripción</label>
-
         <input
           type="text"
           value={description}
@@ -228,7 +375,6 @@ export default function CardPurchaseForm({
 
       <div>
         <label className={labelClassName}>Categoría</label>
-
         <input
           type="text"
           value={category}
@@ -241,8 +387,7 @@ export default function CardPurchaseForm({
       </div>
 
       <div>
-        <label className={labelClassName}>Importe (MXN)</label>
-
+        <label className={labelClassName}>Importe de compra (MXN)</label>
         <input
           type="number"
           value={amount}
@@ -257,14 +402,11 @@ export default function CardPurchaseForm({
 
       <div>
         <label className={labelClassName}>Fecha de compra</label>
-
         <input
           type="date"
           value={purchaseDate}
           max={today}
-          onChange={(event) => {
-            setPurchaseDate(event.target.value);
-          }}
+          onChange={(event) => setPurchaseDate(event.target.value)}
           className={inputClassName}
           disabled={isSubmitting}
         />
@@ -272,9 +414,7 @@ export default function CardPurchaseForm({
 
       {isCreditCard && (
         <div>
-          <label className={labelClassName}>
-            Modalidad de compra
-          </label>
+          <label className={labelClassName}>Modalidad de compra</label>
 
           <div className="grid grid-cols-2 gap-3">
             <button
@@ -300,7 +440,7 @@ export default function CardPurchaseForm({
                   : "border-hairline text-muted hover:bg-surface-card"
               }`}
             >
-              Meses sin intereses
+              Parcialidades
             </button>
           </div>
         </div>
@@ -315,17 +455,17 @@ export default function CardPurchaseForm({
 
             <select
               value={installmentCount}
-              onChange={(event) =>
-                setInstallmentCount(event.target.value)
-              }
+              onChange={(event) => setInstallmentCount(event.target.value)}
               className={inputClassName}
               disabled={isSubmitting}
             >
-              {[3, 6, 9, 12, 18, 24, 36, 48].map((count) => (
-                <option key={count} value={count}>
-                  {count} meses
-                </option>
-              ))}
+              {[3, 6, 9, 12, 18, 24, 36, 48, 60, 72, 84, 96, 120].map(
+                (count) => (
+                  <option key={count} value={count}>
+                    {count} meses
+                  </option>
+                ),
+              )}
             </select>
           </div>
 
@@ -345,35 +485,125 @@ export default function CardPurchaseForm({
 
             <p className="mt-1.5 text-xs text-muted">
               {hasBillingConfiguration
-                ? "Fecha sugerida según el ciclo de facturación de tu tarjeta. Puedes modificarla si es necesario."
-                : "No hay días de corte y pago configurados para esta tarjeta. Selecciona manualmente la fecha de la primera parcialidad."}
-            </p>
-
-            <p className="mt-1.5 text-xs text-muted">
-              Las siguientes parcialidades se programarán mensualmente a partir de esta fecha.
+                ? "Fecha sugerida según el ciclo de facturación de tu tarjeta. Puedes modificarla."
+                : "Selecciona manualmente la fecha de la primera parcialidad."}
             </p>
           </div>
 
-          <div className="rounded-lg bg-brand-lavender/20 p-3">
-            <p className="text-xs text-muted">
-              Importe aproximado por mes
+          <div>
+            <label className={labelClassName}>Tipo de interés</label>
+
+            <select
+              value={interestType}
+              onChange={(event) =>
+                setInterestType(
+                  event.target.value as InstallmentInterestType,
+                )
+              }
+              className={inputClassName}
+              disabled={isSubmitting}
+            >
+              <option value="none">Meses sin intereses</option>
+              <option value="fixed">Interés fijo total</option>
+              <option value="annual_rate">Tasa anual nominal</option>
+            </select>
+          </div>
+
+          {interestType === "fixed" && (
+            <div>
+              <label className={labelClassName}>
+                Importe total de intereses (MXN)
+              </label>
+
+              <input
+                type="number"
+                value={interestAmount}
+                onChange={(event) => setInterestAmount(event.target.value)}
+                min="0.01"
+                step="0.01"
+                placeholder="Ej. 1500.00"
+                className={inputClassName}
+                disabled={isSubmitting}
+              />
+
+              <p className="mt-1 text-xs text-muted">
+                Captura el importe total de intereses que pagarás durante
+                todo el financiamiento.
+              </p>
+            </div>
+          )}
+
+          {interestType === "annual_rate" && (
+            <div>
+              <label className={labelClassName}>
+                Tasa anual nominal (%)
+              </label>
+
+              <input
+                type="number"
+                value={annualInterestRate}
+                onChange={(event) =>
+                  setAnnualInterestRate(event.target.value)
+                }
+                min="0.01"
+                max="1000"
+                step="0.01"
+                placeholder="Ej. 24.00"
+                className={inputClassName}
+                disabled={isSubmitting}
+              />
+
+              <p className="mt-1 text-xs text-muted">
+                Se calculará mediante amortización francesa. No se agrega
+                IVA automáticamente.
+              </p>
+            </div>
+          )}
+
+          <div className="rounded-lg bg-brand-lavender/20 p-4">
+            <p className="text-xs font-medium text-muted">
+              Resumen estimado del financiamiento
             </p>
 
-            <p className="mt-1 text-lg font-semibold text-foreground">
-              {Number(amount) > 0
-                ? (Number(amount) / Number(installmentCount)).toLocaleString(
-                    "es-MX",
-                    {
-                      style: "currency",
-                      currency: "MXN",
-                    },
-                  )
-                : "$0.00"}
-            </p>
+            <div className="mt-3 space-y-2 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted">Capital</span>
+                <span className="font-medium text-foreground">
+                  {formatCurrency(Number(amount) || 0)}
+                </span>
+              </div>
 
-            <p className="mt-1 text-xs text-muted">
-              El importe se calcula dividiendo el total entre las parcialidades.
-            </p>
+              <div className="flex justify-between gap-3">
+                <span className="text-muted">Intereses</span>
+                <span className="font-medium text-foreground">
+                  {formatCurrency(preview.totalInterest)}
+                </span>
+              </div>
+
+              <div className="flex justify-between gap-3 border-t border-hairline pt-2">
+                <span className="font-semibold text-foreground">
+                  Total financiado
+                </span>
+                <span className="font-bold text-foreground">
+                  {formatCurrency(preview.totalAmount)}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-4 border-t border-hairline pt-3">
+              <p className="text-xs text-muted">
+                Mensualidad aproximada
+              </p>
+
+              <p className="mt-1 text-xl font-bold text-foreground">
+                {formatCurrency(preview.monthlyPayment)}
+              </p>
+
+              <p className="mt-1 text-xs text-muted">
+                El calendario definitivo se calcula al registrar la compra.
+                La última mensualidad puede tener una diferencia por redondeo.
+              </p>
+            </div>
           </div>
         </div>
       )}

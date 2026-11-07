@@ -1,24 +1,28 @@
-
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   ChevronDown,
   CreditCard,
   Plus,
+  Wallet,
 } from "lucide-react";
 
 import type {
+  Account,
   Bank,
   BankCard,
   CardPurchase,
+  Installment,
 } from "@/types/account";
 
 import { getCardById } from "@/services/card.service";
 import { getBanks } from "@/services/bank.service";
 import { getCardSummary } from "@/services/account-summary.service";
+import { loadAccountStorage } from "@/services/account-storage.service";
+import { registerInstallmentPaymentFromAccount } from "@/services/card-payment-registration.service";
 
 import {
   getPurchasesByCard,
@@ -63,8 +67,22 @@ function getInstallmentStatusLabel(status: string): string {
       return "Pago parcial";
     case "pending":
       return "Pendiente";
+    case "overdue":
+      return "Vencida";
     default:
       return "Desconocido";
+  }
+}
+
+function getInterestTypeLabel(interestType: string | undefined): string {
+  switch (interestType) {
+    case "fixed":
+      return "Interés fijo";
+    case "annual_rate":
+      return "Tasa anual";
+    case "none":
+    default:
+      return "Meses sin intereses";
   }
 }
 
@@ -76,9 +94,30 @@ function getInstallmentStatusClass(status: string): string {
       return "bg-amber-100 text-amber-700";
     case "pending":
       return "bg-gray-100 text-gray-600";
+    case "overdue":
+      return "bg-red-100 text-red-700";
     default:
       return "bg-gray-100 text-gray-600";
   }
+}
+
+function getTodayDate(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getInstallmentDisplayStatus(installment: Installment): string {
+  const remaining = getInstallmentRemainingAmount(installment);
+
+  if (remaining <= 0) return "paid";
+  if (installment.dueDate < getTodayDate()) return "overdue";
+  if (installment.paidAmount > 0) return "partial";
+
+  return "pending";
 }
 
 // -----------------------------------------------------------------------------
@@ -97,6 +136,7 @@ export default function CardDetailPage() {
   const [summary, setSummary] = useState<
     ReturnType<typeof getCardSummary>
   >(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -109,6 +149,19 @@ export default function CardDetailPage() {
   const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
   const [purchaseError, setPurchaseError] = useState("");
   const [purchaseSuccess, setPurchaseSuccess] = useState("");
+
+  // ---------------------------------------------------------------------------
+  // ESTADO DEL FORMULARIO DE PAGO DE PARCIALIDAD
+  // ---------------------------------------------------------------------------
+
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [selectedInstallment, setSelectedInstallment] =
+    useState<Installment | null>(null);
+  const [paymentAccountId, setPaymentAccountId] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentDate, setPaymentDate] = useState("");
+  const [paymentError, setPaymentError] = useState("");
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
   // ---------------------------------------------------------------------------
   // ESTADO DE PARCIALIDADES DESPLEGADAS
@@ -148,6 +201,7 @@ export default function CardDetailPage() {
         setBank(null);
         setPurchases([]);
         setSummary(null);
+        setAccounts([]);
         return;
       }
 
@@ -158,7 +212,12 @@ export default function CardDetailPage() {
 
       const purchaseData = getPurchasesByCard(cardId);
       const summaryData = getCardSummary(cardId);
+      const accountStorage = loadAccountStorage();
+      const activeAccounts = accountStorage.accounts.filter(
+        (account) => account.status === "active",
+      );
 
+      setAccounts(activeAccounts);
       setCard(cardData);
       setBank(bankData);
       setPurchases(purchaseData);
@@ -202,6 +261,88 @@ export default function CardDetailPage() {
       );
     } finally {
       setIsSubmittingPurchase(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // REGISTRO DE PAGO DE PARCIALIDAD
+  // ---------------------------------------------------------------------------
+
+  const handleOpenPaymentModal = (installment: Installment) => {
+    const remaining = getInstallmentRemainingAmount(installment);
+
+    if (remaining <= 0 || card?.type !== "credit") return;
+
+    const defaultAccount = accounts.find(
+      (account) => account.id === card.paymentAccountId,
+    );
+
+    setSelectedInstallment(installment);
+    setPaymentAccountId(defaultAccount?.id ?? accounts[0]?.id ?? "");
+    setPaymentAmount(remaining.toFixed(2));
+    setPaymentDate(getTodayDate());
+    setPaymentError("");
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleClosePaymentModal = () => {
+    if (isSubmittingPayment) return;
+
+    setIsPaymentModalOpen(false);
+    setSelectedInstallment(null);
+    setPaymentError("");
+  };
+
+  const handleRegisterInstallmentPayment = (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
+    event.preventDefault();
+
+    if (!card || !selectedInstallment) return;
+
+    try {
+      setIsSubmittingPayment(true);
+      setPaymentError("");
+
+      const amount = Number(paymentAmount);
+      const remaining = getInstallmentRemainingAmount(selectedInstallment);
+
+      if (!paymentAccountId) {
+        throw new Error("Selecciona una cuenta de origen.");
+      }
+
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Ingresa un importe válido.");
+      }
+
+      if (amount > remaining) {
+        throw new Error(
+          `El importe no puede superar el saldo pendiente de ${currencyFormatter.format(remaining)}.`,
+        );
+      }
+
+      registerInstallmentPaymentFromAccount({
+        cardId: card.id,
+        sourceAccountId: paymentAccountId,
+        installmentId: selectedInstallment.id,
+        amount,
+        paidAt: paymentDate,
+      });
+
+      setIsPaymentModalOpen(false);
+      setSelectedInstallment(null);
+      setPurchaseSuccess("El pago de la parcialidad se registró correctamente.");
+      loadData();
+    } catch (err) {
+      console.error("Error al registrar el pago de la parcialidad:", err);
+
+      setPaymentError(
+        err instanceof Error
+          ? err.message
+          : "No fue posible registrar el pago.",
+      );
+    } finally {
+      setIsSubmittingPayment(false);
     }
   };
 
@@ -359,7 +500,7 @@ export default function CardDetailPage() {
 
         <article className="rounded-2xl bg-brand-lavender/40 p-5 shadow-sm">
           <p className="text-sm font-medium text-body">
-            Compras a MSI
+            Compras a parcialidades
           </p>
 
           <p className="mt-3 text-2xl font-bold tracking-tight text-foreground">
@@ -369,7 +510,7 @@ export default function CardDetailPage() {
           </p>
 
           <p className="mt-2 text-xs text-body">
-            Importe original de compras a meses
+            Capital original de las compras financiadas
           </p>
         </article>
 
@@ -558,7 +699,7 @@ export default function CardDetailPage() {
                           <td className="px-6 py-5">
                             <span className="rounded-full bg-background px-3 py-1 text-xs font-medium text-foreground">
                               {isInstallmentPurchase
-                                ? `${purchase.installmentCount} MSI`
+                                ? `${purchase.installmentCount} meses · ${getInterestTypeLabel(purchase.interestType)}`
                                 : "Contado"}
                             </span>
                           </td>
@@ -609,50 +750,68 @@ export default function CardDetailPage() {
                                   </div>
 
                                   {/* Resumen del plan */}
-                                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
                                     <div className="rounded-xl bg-surface-card p-4 shadow-sm">
-                                      <p className="text-xs text-muted">
-                                        Importe original
-                                      </p>
-
+                                      <p className="text-xs text-muted">Capital original</p>
                                       <p className="mt-2 text-sm font-bold text-foreground">
-                                        {currencyFormatter.format(
-                                          plan.totalAmount,
-                                        )}
+                                        {currencyFormatter.format(plan.principalAmount)}
                                       </p>
                                     </div>
 
                                     <div className="rounded-xl bg-surface-card p-4 shadow-sm">
-                                      <p className="text-xs text-muted">
-                                        Total pagado
+                                      <p className="text-xs text-muted">Intereses totales</p>
+                                      <p className="mt-2 text-sm font-bold text-foreground">
+                                        {currencyFormatter.format(plan.interestAmount)}
                                       </p>
+                                    </div>
 
+                                    <div className="rounded-xl bg-surface-card p-4 shadow-sm">
+                                      <p className="text-xs text-muted">Total financiado</p>
+                                      <p className="mt-2 text-sm font-bold text-foreground">
+                                        {currencyFormatter.format(plan.totalAmount)}
+                                      </p>
+                                    </div>
+
+                                    <div className="rounded-xl bg-surface-card p-4 shadow-sm">
+                                      <p className="text-xs text-muted">Total pagado</p>
                                       <p className="mt-2 text-sm font-bold text-green-700">
                                         {currencyFormatter.format(totalPaid)}
                                       </p>
                                     </div>
 
                                     <div className="rounded-xl bg-surface-card p-4 shadow-sm">
-                                      <p className="text-xs text-muted">
-                                        Saldo pendiente
-                                      </p>
-
+                                      <p className="text-xs text-muted">Saldo pendiente</p>
                                       <p className="mt-2 text-sm font-bold text-foreground">
-                                        {currencyFormatter.format(
-                                          totalRemaining,
-                                        )}
+                                        {currencyFormatter.format(totalRemaining)}
                                       </p>
                                     </div>
+                                  </div>
 
-                                    <div className="rounded-xl bg-surface-card p-4 shadow-sm">
-                                      <p className="text-xs text-muted">
-                                        Parcialidades pagadas
-                                      </p>
+                                  <div className="rounded-xl bg-surface-card p-4 shadow-sm">
+                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                      <div>
+                                        <p className="text-xs text-muted">Tipo de financiamiento</p>
+                                        <p className="mt-1 text-sm font-semibold text-foreground">
+                                          {getInterestTypeLabel(plan.interestType)}
+                                        </p>
+                                      </div>
 
-                                      <p className="mt-2 text-sm font-bold text-foreground">
-                                        {paidInstallments} de{" "}
-                                        {plan.installmentCount}
-                                      </p>
+                                      {plan.interestType === "annual_rate" &&
+                                        plan.annualInterestRate !== null && (
+                                          <div>
+                                            <p className="text-xs text-muted">Tasa anual nominal</p>
+                                            <p className="mt-1 text-sm font-semibold text-foreground">
+                                              {plan.annualInterestRate.toFixed(2)}%
+                                            </p>
+                                          </div>
+                                        )}
+
+                                      <div>
+                                        <p className="text-xs text-muted">Parcialidades pagadas</p>
+                                        <p className="mt-1 text-sm font-semibold text-foreground">
+                                          {paidInstallments} de {plan.installmentCount}
+                                        </p>
+                                      </div>
                                     </div>
                                   </div>
 
@@ -710,7 +869,15 @@ export default function CardDetailPage() {
                                               </th>
 
                                               <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold text-muted">
-                                                Importe
+                                                Capital
+                                              </th>
+
+                                              <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold text-muted">
+                                                Intereses
+                                              </th>
+
+                                              <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold text-muted">
+                                                Total
                                               </th>
 
                                               <th className="whitespace-nowrap px-4 py-3 text-right text-xs font-semibold text-muted">
@@ -724,11 +891,20 @@ export default function CardDetailPage() {
                                               <th className="px-4 py-3 text-right text-xs font-semibold text-muted">
                                                 Estado
                                               </th>
+                                              <th className="px-4 py-3 text-right text-xs font-semibold text-muted">
+                                                Acción
+                                              </th>
                                             </tr>
                                           </thead>
 
                                           <tbody className="divide-y divide-hairline">
-                                            {installments.map((installment) => (
+                                            {installments.map((installment) => {
+                                              const remaining =
+                                                getInstallmentRemainingAmount(installment);
+                                              const displayStatus =
+                                                getInstallmentDisplayStatus(installment);
+
+                                              return (
                                               <tr key={installment.id}>
                                                 <td className="px-4 py-3 text-sm font-medium text-foreground">
                                                   {installment.installmentNumber}
@@ -739,9 +915,15 @@ export default function CardDetailPage() {
                                                 </td>
 
                                                 <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-foreground">
-                                                  {currencyFormatter.format(
-                                                    installment.amount,
-                                                  )}
+                                                  {currencyFormatter.format(installment.principalAmount)}
+                                                </td>
+
+                                                <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-muted">
+                                                  {currencyFormatter.format(installment.interestAmount)}
+                                                </td>
+
+                                                <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-semibold text-foreground">
+                                                  {currencyFormatter.format(installment.amount)}
                                                 </td>
 
                                                 <td className="whitespace-nowrap px-4 py-3 text-right text-sm text-green-700">
@@ -752,25 +934,38 @@ export default function CardDetailPage() {
 
                                                 <td className="whitespace-nowrap px-4 py-3 text-right text-sm font-medium text-foreground">
                                                   {currencyFormatter.format(
-                                                    getInstallmentRemainingAmount(
-                                                      installment,
-                                                    ),
+                                                    remaining,
                                                   )}
                                                 </td>
 
                                                 <td className="px-4 py-3 text-right">
                                                   <span
                                                     className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${getInstallmentStatusClass(
-                                                      installment.status,
+                                                      displayStatus,
                                                     )}`}
                                                   >
                                                     {getInstallmentStatusLabel(
-                                                      installment.status,
+                                                      displayStatus,
                                                     )}
                                                   </span>
                                                 </td>
+                                                <td className="whitespace-nowrap px-4 py-3 text-right">
+                                                  {card.type === "credit" && remaining > 0 && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        handleOpenPaymentModal(installment)
+                                                      }
+                                                      className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground transition hover:opacity-90"
+                                                    >
+                                                      <Wallet className="h-3.5 w-3.5" />
+                                                      Pagar
+                                                    </button>
+                                                  )}
+                                                </td>
                                               </tr>
-                                            ))}
+                                              );
+                                            })}
                                           </tbody>
                                         </table>
                                       </div>
@@ -844,6 +1039,159 @@ export default function CardDetailPage() {
               onCancel={() => setIsPurchaseModalOpen(false)}
               isSubmitting={isSubmittingPurchase}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Modal de pago de parcialidad */}
+      {isPaymentModalOpen && selectedInstallment && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              handleClosePaymentModal();
+            }
+          }}
+        >
+          <div className="w-full max-w-lg rounded-2xl bg-background p-6 shadow-xl">
+            <div className="mb-6">
+              <h2 className="text-xl font-bold text-foreground">
+                Pagar parcialidad
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                Registra el pago desde una de tus cuentas activas.
+              </p>
+            </div>
+
+            <div className="mb-5 rounded-xl bg-surface-card p-4">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm text-muted">Parcialidad</span>
+                <span className="text-sm font-semibold text-foreground">
+                  #{selectedInstallment.installmentNumber}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-4">
+                <span className="text-sm text-muted">Vencimiento</span>
+                <span className="text-sm font-medium text-foreground">
+                  {formatDate(selectedInstallment.dueDate)}
+                </span>
+              </div>
+              <div className="mt-3 border-t border-hairline pt-3">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium text-muted">
+                    Saldo pendiente
+                  </span>
+                  <span className="text-lg font-bold text-foreground">
+                    {currencyFormatter.format(
+                      getInstallmentRemainingAmount(selectedInstallment),
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {paymentError && (
+              <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {paymentError}
+              </div>
+            )}
+
+            {accounts.length === 0 ? (
+              <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                No tienes cuentas activas disponibles. Registra o reactiva una
+                cuenta antes de realizar el pago.
+              </div>
+            ) : (
+              <form
+                onSubmit={handleRegisterInstallmentPayment}
+                className="space-y-4"
+              >
+                <div>
+                  <label
+                    htmlFor="payment-account"
+                    className="mb-2 block text-sm font-medium text-foreground"
+                  >
+                    Cuenta de origen
+                  </label>
+                  <select
+                    id="payment-account"
+                    value={paymentAccountId}
+                    onChange={(event) =>
+                      setPaymentAccountId(event.target.value)
+                    }
+                    required
+                    className="w-full rounded-xl border border-hairline bg-surface-card px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary"
+                  >
+                    <option value="">Selecciona una cuenta</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="payment-amount"
+                    className="mb-2 block text-sm font-medium text-foreground"
+                  >
+                    Importe a pagar
+                  </label>
+                  <input
+                    id="payment-amount"
+                    type="number"
+                    min="0.01"
+                    max={getInstallmentRemainingAmount(selectedInstallment)}
+                    step="0.01"
+                    value={paymentAmount}
+                    onChange={(event) => setPaymentAmount(event.target.value)}
+                    required
+                    className="w-full rounded-xl border border-hairline bg-surface-card px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary"
+                  />
+                  <p className="mt-1 text-xs text-muted">
+                    Puedes registrar un pago parcial o liquidar la parcialidad.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="payment-date"
+                    className="mb-2 block text-sm font-medium text-foreground"
+                  >
+                    Fecha del pago
+                  </label>
+                  <input
+                    id="payment-date"
+                    type="date"
+                    value={paymentDate}
+                    max={getTodayDate()}
+                    onChange={(event) => setPaymentDate(event.target.value)}
+                    required
+                    className="w-full rounded-xl border border-hairline bg-surface-card px-4 py-3 text-sm text-foreground outline-none transition focus:border-primary"
+                  />
+                </div>
+
+                <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={handleClosePaymentModal}
+                    disabled={isSubmittingPayment}
+                    className="rounded-full border border-hairline px-5 py-3 text-sm font-semibold text-foreground transition hover:bg-surface-card disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingPayment || !paymentAccountId}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Wallet className="h-4 w-4" />
+                    {isSubmittingPayment ? "Registrando..." : "Confirmar pago"}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

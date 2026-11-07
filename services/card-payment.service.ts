@@ -178,16 +178,6 @@ function validateCardPaymentTransfer(
       "La cuenta de origen de la transferencia no está disponible.",
     );
   }
-
-  if (
-    card.paymentAccountId &&
-    card.paymentAccountId !== sourceAccountId
-  ) {
-    throw new Error(
-      "La cuenta de origen no coincide con la cuenta de pago configurada para esta tarjeta.",
-    );
-  }
-
   if (amount !== undefined && roundMoney(transaction.amount) !== amount) {
     throw new Error(
       "El importe del pago global debe coincidir con el importe de la transferencia.",

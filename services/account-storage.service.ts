@@ -1,15 +1,12 @@
-// account-storage.service.ts
-
 import type {
   Account,
   Bank,
   BankCard,
   CardPayment,
   CardPaymentAllocation,
-  CardPaymentAllocationMode,
-  CardPaymentAllocationType,
   CardPurchase,
   Installment,
+  InstallmentInterestType,
   InstallmentPayment,
   InstallmentPlan,
 } from "@/types/account";
@@ -43,24 +40,15 @@ const CARD_STATUSES = ["active", "archived"] as const;
 const PURCHASE_TYPES = ["single", "installments"] as const;
 const PURCHASE_STATUSES = ["active", "cancelled"] as const;
 
-const PLAN_STATUSES = [
-  "active",
-  "completed",
-  "cancelled",
-] as const;
+const INTEREST_TYPES = ["none", "fixed", "annual_rate"] as const;
 
-const INSTALLMENT_STATUSES = [
-  "pending",
-  "partial",
-  "paid",
-] as const;
+const PLAN_STATUSES = ["active", "completed", "cancelled"] as const;
+
+const INSTALLMENT_STATUSES = ["pending", "partial", "paid"] as const;
 
 const PAYMENT_METHODS = ["manual", "transaction"] as const;
 
-const CARD_PAYMENT_ALLOCATION_MODES = [
-  "automatic",
-  "manual",
-] as const;
+const CARD_PAYMENT_ALLOCATION_MODES = ["automatic", "manual"] as const;
 
 const CARD_PAYMENT_ALLOCATION_TYPES = [
   "single_purchase",
@@ -81,14 +69,8 @@ const EMPTY_STORAGE: Omit<AccountStorageData, "banks"> = {
 // UTILIDADES
 // -----------------------------------------------------------------------------
 
-function isObject(
-  value: unknown,
-): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value)
-  );
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isString(value: unknown): value is string {
@@ -99,21 +81,12 @@ function isNonEmptyString(value: unknown): value is string {
   return isString(value) && value.trim().length > 0;
 }
 
-function isNullableString(
-  value: unknown,
-): value is string | null {
+function isNullableString(value: unknown): value is string | null {
   return value === null || isString(value);
 }
 
-function isOptionalString(value: unknown): boolean {
-  return value === undefined || isString(value);
-}
-
 function isFiniteNumber(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value)
-  );
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isPositiveNumber(value: unknown): value is number {
@@ -124,8 +97,7 @@ function isMoney(value: unknown): value is number {
   return (
     isFiniteNumber(value) &&
     value > 0 &&
-    Math.abs(value * 100 - Math.round(value * 100)) <
-      0.000001
+    Math.abs(value * 100 - Math.round(value * 100)) < 0.000001
   );
 }
 
@@ -133,24 +105,18 @@ function isNonNegativeMoney(value: unknown): value is number {
   return (
     isFiniteNumber(value) &&
     value >= 0 &&
-    Math.abs(value * 100 - Math.round(value * 100)) <
-      0.000001
+    Math.abs(value * 100 - Math.round(value * 100)) < 0.000001
   );
 }
 
 function isValidDate(value: unknown): value is string {
-  if (
-    !isString(value) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(value)
-  ) {
+  if (!isString(value) || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return false;
   }
 
   const [year, month, day] = value.split("-").map(Number);
 
-  const date = new Date(
-    Date.UTC(year, month - 1, day),
-  );
+  const date = new Date(Date.UTC(year, month - 1, day));
 
   return (
     date.getUTCFullYear() === year &&
@@ -170,12 +136,10 @@ function isValidTimestamp(value: unknown): value is string {
 function isValidDay(value: unknown): boolean {
   return (
     value === null ||
-    (
-      typeof value === "number" &&
+    (typeof value === "number" &&
       Number.isInteger(value) &&
       value >= 1 &&
-      value <= 31
-    )
+      value <= 31)
   );
 }
 
@@ -183,31 +147,26 @@ function isOneOf<T extends readonly string[]>(
   value: unknown,
   values: T,
 ): value is T[number] {
-  return (
-    typeof value === "string" &&
-    values.includes(value)
-  );
+  return typeof value === "string" && values.includes(value);
 }
 
 function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function isUniqueById<T extends { id: string }>(
-  items: T[],
-): boolean {
-  return new Set(items.map((item) => item.id)).size ===
-    items.length;
+function isMoneyEqual(a: number, b: number): boolean {
+  return roundMoney(a) === roundMoney(b);
+}
+
+function isUniqueById<T extends { id: string }>(items: T[]): boolean {
+  return new Set(items.map((item) => item.id)).size === items.length;
 }
 
 function isArrayOf<T>(
   value: unknown,
   validator: (item: unknown) => item is T,
 ): value is T[] {
-  return (
-    Array.isArray(value) &&
-    value.every(validator)
-  );
+  return Array.isArray(value) && value.every(validator);
 }
 
 // -----------------------------------------------------------------------------
@@ -246,10 +205,7 @@ function isAccount(value: unknown): value is Account {
     isValidDate(value.openingDate) &&
     isOneOf(value.status, ACCOUNT_STATUSES) &&
     isValidTimestamp(value.createdAt) &&
-    (
-      value.archivedAt === undefined ||
-      isValidTimestamp(value.archivedAt)
-    )
+    (value.archivedAt === undefined || isValidTimestamp(value.archivedAt))
   );
 }
 
@@ -269,18 +225,79 @@ function isBankCard(value: unknown): value is BankCard {
     isOneOf(value.type, CARD_TYPES) &&
     isNullableString(value.linkedAccountId) &&
     isNullableString(value.paymentAccountId) &&
-    (
-      value.creditLimit === null ||
-      isPositiveNumber(value.creditLimit)
-    ) &&
+    (value.creditLimit === null || isPositiveNumber(value.creditLimit)) &&
     isValidDay(value.cutoffDay) &&
     isValidDay(value.paymentDueDay) &&
     isOneOf(value.status, CARD_STATUSES) &&
     isValidTimestamp(value.createdAt) &&
-    (
-      value.archivedAt === undefined ||
-      isValidTimestamp(value.archivedAt)
-    )
+    (value.archivedAt === undefined || isValidTimestamp(value.archivedAt))
+  );
+}
+
+// -----------------------------------------------------------------------------
+// VALIDACIÓN DE CONFIGURACIÓN DE INTERESES
+// -----------------------------------------------------------------------------
+
+function isInterestType(value: unknown): value is InstallmentInterestType {
+  return isOneOf(value, INTEREST_TYPES);
+}
+
+function isValidPurchaseInterestConfiguration(
+  value: Record<string, unknown>,
+): boolean {
+  const interestType = value.interestType;
+  const interestAmount = value.interestAmount;
+  const annualInterestRate = value.annualInterestRate;
+
+  if (!isInterestType(interestType) || !isNonNegativeMoney(interestAmount)) {
+    return false;
+  }
+
+  if (interestType === "none") {
+    return interestAmount === 0 && annualInterestRate === null;
+  }
+
+  if (interestType === "fixed") {
+    return (
+      isPositiveNumber(interestAmount) &&
+      Math.abs(interestAmount * 100 - Math.round(interestAmount * 100)) <
+        0.000001 &&
+      annualInterestRate === null
+    );
+  }
+
+  return (
+    interestAmount === 0 &&
+    isFiniteNumber(annualInterestRate) &&
+    annualInterestRate > 0 &&
+    annualInterestRate <= 1000
+  );
+}
+
+function isValidPlanInterestConfiguration(
+  value: Record<string, unknown>,
+): boolean {
+  const interestType = value.interestType;
+  const interestAmount = value.interestAmount;
+  const annualInterestRate = value.annualInterestRate;
+
+  if (!isInterestType(interestType) || !isNonNegativeMoney(interestAmount)) {
+    return false;
+  }
+
+  if (interestType === "none") {
+    return interestAmount === 0 && annualInterestRate === null;
+  }
+
+  if (interestType === "fixed") {
+    return interestAmount > 0 && annualInterestRate === null;
+  }
+
+  return (
+    isNonNegativeMoney(interestAmount) &&
+    isFiniteNumber(annualInterestRate) &&
+    annualInterestRate > 0 &&
+    annualInterestRate <= 1000
   );
 }
 
@@ -295,17 +312,13 @@ function isCardPurchase(value: unknown): value is CardPurchase {
 
   const validInstallmentConfiguration =
     value.purchaseType === "installments"
-      ? (
-          typeof value.installmentCount === "number" &&
-          Number.isInteger(value.installmentCount) &&
-          value.installmentCount >= 2 &&
-          isValidDate(value.firstDueDate)
-        )
-      : (
-          value.purchaseType === "single" &&
-          value.installmentCount === null &&
-          value.firstDueDate === null
-        );
+      ? typeof value.installmentCount === "number" &&
+        Number.isInteger(value.installmentCount) &&
+        value.installmentCount >= 2 &&
+        isValidDate(value.firstDueDate)
+      : value.purchaseType === "single" &&
+        value.installmentCount === null &&
+        value.firstDueDate === null;
 
   return (
     isNonEmptyString(value.id) &&
@@ -316,6 +329,11 @@ function isCardPurchase(value: unknown): value is CardPurchase {
     isValidDate(value.purchaseDate) &&
     isOneOf(value.purchaseType, PURCHASE_TYPES) &&
     validInstallmentConfiguration &&
+    isValidPurchaseInterestConfiguration(value) &&
+    (value.purchaseType !== "single" ||
+      (value.interestType === "none" &&
+        value.interestAmount === 0 &&
+        value.annualInterestRate === null)) &&
     isOneOf(value.status, PURCHASE_STATUSES) &&
     isNullableString(value.installmentPlanId) &&
     isValidTimestamp(value.createdAt)
@@ -323,30 +341,35 @@ function isCardPurchase(value: unknown): value is CardPurchase {
 }
 
 // -----------------------------------------------------------------------------
-// VALIDACIÓN DE PLANES MSI
+// VALIDACIÓN DE PLANES DE PARCIALIDADES
 // -----------------------------------------------------------------------------
 
-function isInstallmentPlan(
-  value: unknown,
-): value is InstallmentPlan {
+function isInstallmentPlan(value: unknown): value is InstallmentPlan {
   if (!isObject(value)) {
     return false;
   }
 
+  const validAmounts =
+    isMoney(value.principalAmount) &&
+    isNonNegativeMoney(value.interestAmount) &&
+    isMoney(value.totalAmount) &&
+    isMoneyEqual(
+      value.principalAmount + value.interestAmount,
+      value.totalAmount,
+    );
+
   return (
     isNonEmptyString(value.id) &&
     isNonEmptyString(value.cardPurchaseId) &&
-    isMoney(value.totalAmount) &&
+    validAmounts &&
+    isValidPlanInterestConfiguration(value) &&
     typeof value.installmentCount === "number" &&
     Number.isInteger(value.installmentCount) &&
     value.installmentCount >= 2 &&
     isValidDate(value.firstDueDate) &&
     isOneOf(value.status, PLAN_STATUSES) &&
     isValidTimestamp(value.createdAt) &&
-    (
-      value.cancelledAt === undefined ||
-      isValidTimestamp(value.cancelledAt)
-    )
+    (value.cancelledAt === undefined || isValidTimestamp(value.cancelledAt))
   );
 }
 
@@ -354,23 +377,17 @@ function isInstallmentPlan(
 // VALIDACIÓN DE PAGOS DE PARCIALIDADES
 // -----------------------------------------------------------------------------
 
-function isInstallmentPayment(
-  value: unknown,
-): value is InstallmentPayment {
+function isInstallmentPayment(value: unknown): value is InstallmentPayment {
   if (!isObject(value)) {
     return false;
   }
 
-  const validMethod = isOneOf(
-    value.method,
-    PAYMENT_METHODS,
-  );
+  const validMethod = isOneOf(value.method, PAYMENT_METHODS);
 
   const validTransactionReference =
     value.method === "transaction"
       ? isNonEmptyString(value.transactionId)
-      : value.method === "manual" &&
-        value.transactionId === null;
+      : value.method === "manual" && value.transactionId === null;
 
   return (
     isNonEmptyString(value.id) &&
@@ -379,10 +396,7 @@ function isInstallmentPayment(
     isValidDate(value.paidAt) &&
     validMethod &&
     validTransactionReference &&
-    (
-      value.cardPaymentId === undefined ||
-      isNonEmptyString(value.cardPaymentId)
-    )
+    (value.cardPaymentId === undefined || isNonEmptyString(value.cardPaymentId))
   );
 }
 
@@ -401,10 +415,7 @@ function isCardPayment(value: unknown): value is CardPayment {
     isNonEmptyString(value.transactionId) &&
     isMoney(value.amount) &&
     isValidDate(value.paidAt) &&
-    isOneOf(
-      value.allocationMode,
-      CARD_PAYMENT_ALLOCATION_MODES,
-    ) &&
+    isOneOf(value.allocationMode, CARD_PAYMENT_ALLOCATION_MODES) &&
     isValidTimestamp(value.createdAt)
   );
 }
@@ -422,24 +433,15 @@ function isCardPaymentAllocation(
 
   const validReferences =
     value.type === "single_purchase"
-      ? (
-          isNonEmptyString(value.purchaseId) &&
-          value.installmentId === null
-        )
+      ? isNonEmptyString(value.purchaseId) && value.installmentId === null
       : value.type === "installment"
-        ? (
-            value.purchaseId === null &&
-            isNonEmptyString(value.installmentId)
-          )
+        ? value.purchaseId === null && isNonEmptyString(value.installmentId)
         : false;
 
   return (
     isNonEmptyString(value.id) &&
     isNonEmptyString(value.cardPaymentId) &&
-    isOneOf(
-      value.type,
-      CARD_PAYMENT_ALLOCATION_TYPES,
-    ) &&
+    isOneOf(value.type, CARD_PAYMENT_ALLOCATION_TYPES) &&
     validReferences &&
     isMoney(value.amount) &&
     isValidTimestamp(value.createdAt)
@@ -463,6 +465,9 @@ function isInstallment(value: unknown): value is Installment {
     value.installmentNumber < 1 ||
     !isValidDate(value.dueDate) ||
     !isMoney(value.amount) ||
+    !isMoney(value.principalAmount) ||
+    !isNonNegativeMoney(value.interestAmount) ||
+    !isMoneyEqual(value.principalAmount + value.interestAmount, value.amount) ||
     !isNonNegativeMoney(value.paidAmount) ||
     value.paidAmount > value.amount ||
     !isOneOf(value.status, INSTALLMENT_STATUSES) ||
@@ -474,8 +479,7 @@ function isInstallment(value: unknown): value is Installment {
   if (
     !value.payments.every(
       (payment: unknown) =>
-        isInstallmentPayment(payment) &&
-        payment.installmentId === value.id,
+        isInstallmentPayment(payment) && payment.installmentId === value.id,
     )
   ) {
     return false;
@@ -483,15 +487,12 @@ function isInstallment(value: unknown): value is Installment {
 
   const paymentsTotal = roundMoney(
     value.payments.reduce(
-      (
-        total: number,
-        payment: InstallmentPayment,
-      ) => total + payment.amount,
+      (total: number, payment: InstallmentPayment) => total + payment.amount,
       0,
     ),
   );
 
-  if (paymentsTotal !== roundMoney(value.paidAmount)) {
+  if (!isMoneyEqual(paymentsTotal, value.paidAmount)) {
     return false;
   }
 
@@ -506,7 +507,33 @@ function isInstallment(value: unknown): value is Installment {
 }
 
 // -----------------------------------------------------------------------------
-// MIGRACIÓN DE COMPRAS MSI
+// MIGRACIÓN DE PLANES ANTERIORES
+// -----------------------------------------------------------------------------
+
+function migrateInstallmentPlan(value: unknown): unknown {
+  if (!isObject(value)) {
+    return value;
+  }
+
+  const principalAmount = value.principalAmount ?? value.totalAmount;
+
+  const interestAmount = value.interestAmount ?? 0;
+
+  const interestType = value.interestType ?? "none";
+
+  const annualInterestRate = value.annualInterestRate ?? null;
+
+  return {
+    ...value,
+    principalAmount,
+    interestAmount,
+    interestType,
+    annualInterestRate,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// MIGRACIÓN DE COMPRAS ANTERIORES
 // -----------------------------------------------------------------------------
 
 function migrateCardPurchase(
@@ -517,42 +544,52 @@ function migrateCardPurchase(
     return value;
   }
 
-  if (
-    value.installmentCount !== undefined &&
-    value.firstDueDate !== undefined
-  ) {
+  const existingPlan = plans.find((plan) => plan.cardPurchaseId === value.id);
+
+  const installmentCount =
+    value.purchaseType === "installments"
+      ? (value.installmentCount ?? existingPlan?.installmentCount)
+      : null;
+
+  const firstDueDate =
+    value.purchaseType === "installments"
+      ? (value.firstDueDate ?? existingPlan?.firstDueDate)
+      : null;
+
+  const interestType =
+    value.interestType ?? existingPlan?.interestType ?? "none";
+
+  const interestAmount =
+    value.interestAmount ??
+    (interestType === "fixed" ? (existingPlan?.interestAmount ?? 0) : 0);
+
+  const annualInterestRate =
+    value.annualInterestRate ?? existingPlan?.annualInterestRate ?? null;
+
+  return {
+    ...value,
+    installmentCount,
+    firstDueDate,
+    interestType,
+    interestAmount,
+    annualInterestRate,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// MIGRACIÓN DE PARCIALIDADES ANTERIORES
+// -----------------------------------------------------------------------------
+
+function migrateInstallment(value: unknown): unknown {
+  if (!isObject(value)) {
     return value;
   }
 
-  if (value.purchaseType === "single") {
-    return {
-      ...value,
-      installmentCount: null,
-      firstDueDate: null,
-    };
-  }
-
-  if (value.purchaseType === "installments") {
-    const existingPlan = plans.find(
-      (plan) => plan.cardPurchaseId === value.id,
-    );
-
-    if (existingPlan) {
-      return {
-        ...value,
-        installmentCount:
-          value.installmentCount ??
-          existingPlan.installmentCount,
-        firstDueDate:
-          value.firstDueDate ??
-          existingPlan.firstDueDate,
-      };
-    }
-  }
-
-  // No se inventa información MSI que no pueda recuperarse.
-  // El registro se conserva en el almacenamiento original.
-  return value;
+  return {
+    ...value,
+    principalAmount: value.principalAmount ?? value.amount,
+    interestAmount: value.interestAmount ?? 0,
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -595,23 +632,28 @@ function createInitialStorage(): AccountStorageData {
   };
 }
 
-function normalizeStorage(
-  parsed: Record<string, unknown>,
-): AccountStorageData {
-  const plans = isArrayOf(
-    parsed.installmentPlans,
-    isInstallmentPlan,
-  )
+function normalizeStorage(parsed: Record<string, unknown>): AccountStorageData {
+  // Primero se migran los planes para poder recuperar desde ellos
+  // la configuración histórica de las compras.
+  const rawPlans = Array.isArray(parsed.installmentPlans)
     ? parsed.installmentPlans
     : [];
 
-  const rawPurchases = Array.isArray(parsed.purchases)
-    ? parsed.purchases
-    : [];
+  const migratedPlans = rawPlans.map(migrateInstallmentPlan);
+
+  const plans = migratedPlans.filter(isInstallmentPlan);
+
+  const rawPurchases = Array.isArray(parsed.purchases) ? parsed.purchases : [];
 
   const migratedPurchases = rawPurchases.map((purchase) =>
     migrateCardPurchase(purchase, plans),
   );
+
+  const rawInstallments = Array.isArray(parsed.installments)
+    ? parsed.installments
+    : [];
+
+  const migratedInstallments = rawInstallments.map(migrateInstallment);
 
   return {
     banks: mergeBanks(parsed.banks),
@@ -620,28 +662,20 @@ function normalizeStorage(
       ? parsed.accounts.filter(isAccount)
       : [],
 
-    cards: Array.isArray(parsed.cards)
-      ? parsed.cards.filter(isBankCard)
-      : [],
+    cards: Array.isArray(parsed.cards) ? parsed.cards.filter(isBankCard) : [],
 
     purchases: migratedPurchases.filter(isCardPurchase),
 
     installmentPlans: plans,
 
-    installments: Array.isArray(parsed.installments)
-      ? parsed.installments.filter(isInstallment)
-      : [],
+    installments: migratedInstallments.filter(isInstallment),
 
     cardPayments: Array.isArray(parsed.cardPayments)
       ? parsed.cardPayments.filter(isCardPayment)
       : [],
 
-    cardPaymentAllocations: Array.isArray(
-      parsed.cardPaymentAllocations,
-    )
-      ? parsed.cardPaymentAllocations.filter(
-          isCardPaymentAllocation,
-        )
+    cardPaymentAllocations: Array.isArray(parsed.cardPaymentAllocations)
+      ? parsed.cardPaymentAllocations.filter(isCardPaymentAllocation)
       : [],
   };
 }
@@ -650,9 +684,7 @@ function normalizeStorage(
 // VALIDACIÓN COMPLETA DEL ALMACENAMIENTO
 // -----------------------------------------------------------------------------
 
-function arePaymentIdsUnique(
-  installments: Installment[],
-): boolean {
+function arePaymentIdsUnique(installments: Installment[]): boolean {
   const paymentIds = installments.flatMap((installment) =>
     installment.payments.map((payment) => payment.id),
   );
@@ -660,9 +692,7 @@ function arePaymentIdsUnique(
   return new Set(paymentIds).size === paymentIds.length;
 }
 
-function isValidStorageStructure(
-  data: AccountStorageData,
-): boolean {
+function isValidStorageStructure(data: AccountStorageData): boolean {
   return (
     isArrayOf(data.banks, isBank) &&
     isArrayOf(data.accounts, isAccount) &&
@@ -671,10 +701,7 @@ function isValidStorageStructure(
     isArrayOf(data.installmentPlans, isInstallmentPlan) &&
     isArrayOf(data.installments, isInstallment) &&
     isArrayOf(data.cardPayments, isCardPayment) &&
-    isArrayOf(
-      data.cardPaymentAllocations,
-      isCardPaymentAllocation,
-    ) &&
+    isArrayOf(data.cardPaymentAllocations, isCardPaymentAllocation) &&
     isUniqueById(data.banks) &&
     isUniqueById(data.accounts) &&
     isUniqueById(data.cards) &&
@@ -692,8 +719,8 @@ function isValidStorageStructure(
 // -----------------------------------------------------------------------------
 
 /**
- * Comprueba que la normalización no esté descartando registros
- * existentes. Evita sobrescribir datos que no puedan recuperarse.
+ * Comprueba que la normalización no esté descartando registros existentes.
+ * Evita sobrescribir datos que no puedan recuperarse.
  */
 function hasUnrecoverableStoredRecords(
   parsed: Record<string, unknown>,
@@ -704,8 +731,6 @@ function hasUnrecoverableStoredRecords(
   }> = [
     { key: "accounts", validator: isAccount },
     { key: "cards", validator: isBankCard },
-    { key: "installmentPlans", validator: isInstallmentPlan },
-    { key: "installments", validator: isInstallment },
     { key: "cardPayments", validator: isCardPayment },
     {
       key: "cardPaymentAllocations",
@@ -720,14 +745,28 @@ function hasUnrecoverableStoredRecords(
       continue;
     }
 
-    if (
-      !Array.isArray(raw) ||
-      !raw.every(collection.validator)
-    ) {
+    if (!Array.isArray(raw) || !raw.every(collection.validator)) {
       return true;
     }
   }
 
+  // Los planes antiguos se migran antes de validarse.
+  const rawPlans = parsed.installmentPlans;
+
+  const migratedPlans = Array.isArray(rawPlans)
+    ? rawPlans.map(migrateInstallmentPlan)
+    : [];
+
+  if (
+    rawPlans !== undefined &&
+    (!Array.isArray(rawPlans) || !migratedPlans.every(isInstallmentPlan))
+  ) {
+    return true;
+  }
+
+  const validPlans = migratedPlans.filter(isInstallmentPlan);
+
+  // Las compras antiguas pueden recuperar sus datos del plan.
   const rawPurchases = parsed.purchases;
 
   if (rawPurchases !== undefined) {
@@ -735,22 +774,27 @@ function hasUnrecoverableStoredRecords(
       return true;
     }
 
-    const validPlans = isArrayOf(
-      parsed.installmentPlans,
-      isInstallmentPlan,
-    )
-      ? parsed.installmentPlans
-      : [];
-
     for (const rawPurchase of rawPurchases) {
-      const migrated = migrateCardPurchase(
-        rawPurchase,
-        validPlans,
-      );
+      const migrated = migrateCardPurchase(rawPurchase, validPlans);
 
       if (!isCardPurchase(migrated)) {
         return true;
       }
+    }
+  }
+
+  // Las parcialidades antiguas se interpretan como capital sin intereses.
+  const rawInstallments = parsed.installments;
+
+  if (rawInstallments !== undefined) {
+    if (!Array.isArray(rawInstallments)) {
+      return true;
+    }
+
+    const migratedInstallments = rawInstallments.map(migrateInstallment);
+
+    if (!migratedInstallments.every(isInstallment)) {
+      return true;
     }
   }
 
@@ -778,20 +822,18 @@ export function loadAccountStorage(): AccountStorageData {
     if (!isObject(parsed)) {
       console.error(
         "El almacenamiento de cuentas tiene una estructura inválida. " +
-        "Los datos originales se conservaron.",
+          "Los datos originales se conservaron.",
       );
 
       return createInitialStorage();
     }
 
-    // Si existen registros que no pueden recuperarse, no entregamos
-    // una versión parcial a los servicios que consumen este almacenamiento.
-    // El contenido original permanece intacto en localStorage.
+    // No entregar una versión parcial si hay registros irrecuperables.
     if (hasUnrecoverableStoredRecords(parsed)) {
       console.error(
         "Se detectaron registros financieros que no pudieron " +
-        "recuperarse completamente. El almacenamiento no se cargó " +
-        "para evitar operar con información parcial.",
+          "recuperarse completamente. El almacenamiento no se cargó " +
+          "para evitar operar con información parcial.",
       );
 
       return createInitialStorage();
@@ -802,8 +844,8 @@ export function loadAccountStorage(): AccountStorageData {
     if (!isValidStorageStructure(normalizedStorage)) {
       console.error(
         "El almacenamiento de cuentas contiene datos inválidos, " +
-        "identificadores duplicados o relaciones estructurales inconsistentes. " +
-        "Los datos originales se conservaron.",
+          "identificadores duplicados o relaciones estructurales inconsistentes. " +
+          "Los datos originales se conservaron.",
       );
 
       return createInitialStorage();
@@ -811,10 +853,7 @@ export function loadAccountStorage(): AccountStorageData {
 
     return normalizedStorage;
   } catch (error) {
-    console.error(
-      "Error al cargar los datos de cuentas:",
-      error,
-    );
+    console.error("Error al cargar los datos de cuentas:", error);
 
     return createInitialStorage();
   }
@@ -824,9 +863,7 @@ export function loadAccountStorage(): AccountStorageData {
 // GUARDADO
 // -----------------------------------------------------------------------------
 
-export function saveAccountStorage(
-  data: AccountStorageData,
-): boolean {
+export function saveAccountStorage(data: AccountStorageData): boolean {
   if (typeof window === "undefined") {
     return false;
   }
@@ -845,8 +882,8 @@ export function saveAccountStorage(
       ) {
         console.error(
           "No se guardaron los datos de cuentas: el almacenamiento " +
-          "existente contiene registros inválidos, identificadores " +
-          "duplicados o información que requiere recuperación.",
+            "existente contiene registros inválidos, identificadores " +
+            "duplicados o información que requiere recuperación.",
         );
 
         return false;
@@ -867,7 +904,7 @@ export function saveAccountStorage(
     if (!isValidStorageStructure(normalizedStorage)) {
       console.error(
         "No se puede guardar el almacenamiento: existen registros " +
-        "inválidos o identificadores duplicados.",
+          "inválidos o identificadores duplicados.",
       );
 
       return false;
@@ -879,10 +916,7 @@ export function saveAccountStorage(
 
     return true;
   } catch (error) {
-    console.error(
-      "Error al guardar los datos de cuentas:",
-      error,
-    );
+    console.error("Error al guardar los datos de cuentas:", error);
 
     return false;
   }
@@ -900,9 +934,6 @@ export function clearAccountStorage(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
   } catch (error) {
-    console.error(
-      "Error al limpiar los datos de cuentas:",
-      error,
-    );
+    console.error("Error al limpiar los datos de cuentas:", error);
   }
 }
