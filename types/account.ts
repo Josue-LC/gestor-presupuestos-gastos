@@ -1,4 +1,4 @@
-
+// account.ts
 export type AccountType =
   | "checking"
   | "savings"

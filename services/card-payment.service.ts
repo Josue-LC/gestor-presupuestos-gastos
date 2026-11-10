@@ -12,13 +12,9 @@ import {
   saveAccountStorage,
 } from "@/services/account-storage.service";
 
-import {
-  loadTransactionStorage,
-} from "@/services/transaction-storage.service";
+import { loadTransactionStorage } from "@/services/transaction-storage.service";
 
-import {
-  applyCardPaymentToInstallment,
-} from "@/services/installment-payment.service";
+import { applyCardPaymentToInstallment } from "@/services/installment-payment.service";
 
 export interface ManualCardPaymentAllocation {
   type: CardPaymentAllocationType;
@@ -49,6 +45,16 @@ export interface CardPaymentSummary {
   unappliedAmount: number;
 }
 
+export interface CardPaymentAllocationTarget {
+  id: string;
+  type: "single_purchase" | "installment";
+  description: string;
+  dueDate: string;
+  totalAmount: number;
+  paidAmount: number;
+  remainingAmount: number;
+}
+
 function generateId(): string {
   return crypto.randomUUID();
 }
@@ -58,11 +64,7 @@ function roundMoney(amount: number): number {
 }
 
 function isValidMoney(amount: number): boolean {
-  return (
-    Number.isFinite(amount) &&
-    amount > 0 &&
-    roundMoney(amount) === amount
-  );
+  return Number.isFinite(amount) && amount > 0 && roundMoney(amount) === amount;
 }
 
 function isValidDate(value: string): boolean {
@@ -94,11 +96,7 @@ function parseTransferAccount(account: string): {
 } {
   const parts = account.split("→").map((part) => part.trim());
 
-  if (
-    parts.length !== 2 ||
-    !parts[0] ||
-    !parts[1]
-  ) {
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error("El formato de la transferencia no es válido.");
   }
 
@@ -126,9 +124,7 @@ function validateCardPaymentTransfer(
     throw new Error("No hay información financiera disponible.");
   }
 
-  const card = accountStorage.cards.find(
-    (item) => item.id === cardId,
-  );
+  const card = accountStorage.cards.find((item) => item.id === cardId);
 
   if (!card || card.type !== "credit" || card.status !== "active") {
     throw new Error("La tarjeta de crédito no está disponible.");
@@ -160,8 +156,9 @@ function validateCardPaymentTransfer(
     throw new Error("El importe de la transferencia no es válido.");
   }
 
-  const { sourceAccountId, destinationAccountId } =
-    parseTransferAccount(transaction.account);
+  const { sourceAccountId, destinationAccountId } = parseTransferAccount(
+    transaction.account,
+  );
 
   if (destinationAccountId !== `card:${card.id}`) {
     throw new Error(
@@ -212,18 +209,14 @@ function validateCardPaymentTransfer(
   );
 
   if (duplicatedPayment) {
-    throw new Error(
-      "Esta transferencia ya está vinculada a un pago global.",
-    );
+    throw new Error("Esta transferencia ya está vinculada a un pago global.");
   }
 
-  const legacyUsage = accountStorage.installments.some(
-    (installment) =>
-      installment.payments.some(
-        (payment) =>
-          payment.transactionId === transactionId &&
-          !payment.cardPaymentId,
-      ),
+  const legacyUsage = accountStorage.installments.some((installment) =>
+    installment.payments.some(
+      (payment) =>
+        payment.transactionId === transactionId && !payment.cardPaymentId,
+    ),
   );
 
   if (legacyUsage) {
@@ -289,9 +282,7 @@ function validateAllocationList(
   );
 
   if (new Set(targetKeys).size !== targetKeys.length) {
-    throw new Error(
-      "No puedes repetir el mismo concepto en las aplicaciones.",
-    );
+    throw new Error("No puedes repetir el mismo concepto en las aplicaciones.");
   }
 }
 
@@ -312,19 +303,11 @@ function getPurchaseAllocatedAmount(
   );
 }
 
-function getInstallmentRemaining(
-  installment: Installment,
-): number {
-  return Math.max(
-    0,
-    roundMoney(installment.amount - installment.paidAmount),
-  );
+function getInstallmentRemaining(installment: Installment): number {
+  return Math.max(0, roundMoney(installment.amount - installment.paidAmount));
 }
 
-function getInstallmentPriority(
-  dueDate: string,
-  today: string,
-): number {
+function getInstallmentPriority(dueDate: string, today: string): number {
   if (dueDate < today) return 0;
   if (dueDate === today) return 1;
   return 2;
@@ -339,9 +322,7 @@ function allocateToSinglePurchase(
   storage: NonNullable<ReturnType<typeof loadAccountStorage>>;
   allocation: CardPaymentAllocation;
 } {
-  const purchase = storage.purchases.find(
-    (item) => item.id === purchaseId,
-  );
+  const purchase = storage.purchases.find((item) => item.id === purchaseId);
 
   if (
     !purchase ||
@@ -354,15 +335,9 @@ function allocateToSinglePurchase(
     );
   }
 
-  const alreadyAllocated = getPurchaseAllocatedAmount(
-    storage,
-    purchase.id,
-  );
+  const alreadyAllocated = getPurchaseAllocatedAmount(storage, purchase.id);
 
-  const remaining = Math.max(
-    0,
-    roundMoney(purchase.amount - alreadyAllocated),
-  );
+  const remaining = Math.max(0, roundMoney(purchase.amount - alreadyAllocated));
 
   if (remaining <= 0) {
     throw new Error("La compra seleccionada ya está liquidada.");
@@ -387,10 +362,7 @@ function allocateToSinglePurchase(
   return {
     storage: {
       ...storage,
-      cardPaymentAllocations: [
-        ...storage.cardPaymentAllocations,
-        allocation,
-      ],
+      cardPaymentAllocations: [...storage.cardPaymentAllocations, allocation],
     },
     allocation,
   };
@@ -419,9 +391,7 @@ function getAutomaticAllocationTargets(
       );
 
       const purchase = plan
-        ? storage.purchases.find(
-            (item) => item.id === plan.cardPurchaseId,
-          )
+        ? storage.purchases.find((item) => item.id === plan.cardPurchaseId)
         : undefined;
 
       return (
@@ -443,8 +413,7 @@ function getAutomaticAllocationTargets(
         purchase.status === "active" &&
         purchase.purchaseType === "single" &&
         roundMoney(
-          purchase.amount -
-            getPurchaseAllocatedAmount(storage, purchase.id),
+          purchase.amount - getPurchaseAllocatedAmount(storage, purchase.id),
         ) > 0,
     )
     .map((purchase) => ({
@@ -463,9 +432,7 @@ function getAutomaticAllocationTargets(
     return priorityDifference || a.dueDate.localeCompare(b.dueDate);
   });
 
-  singlePurchaseTargets.sort((a, b) =>
-    a.dueDate.localeCompare(b.dueDate),
-  );
+  singlePurchaseTargets.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
   return [...installmentTargets, ...singlePurchaseTargets];
 }
@@ -508,10 +475,7 @@ export function registerCardPayment(
     throw new Error("La fecha del pago no puede ser futura.");
   }
 
-  if (
-    data.allocationMode !== "automatic" &&
-    data.allocationMode !== "manual"
-  ) {
+  if (data.allocationMode !== "automatic" && data.allocationMode !== "manual") {
     throw new Error("El modo de distribución no es válido.");
   }
 
@@ -585,14 +549,11 @@ export function registerCardPayment(
           throw new Error("Debes indicar la parcialidad MSI.");
         }
 
-        const result = applyCardPaymentToInstallment(
-          workingStorage,
-          {
-            installmentId: allocationData.installmentId,
-            cardPaymentId: payment.id,
-            amount: allocationData.amount,
-          },
-        );
+        const result = applyCardPaymentToInstallment(workingStorage, {
+          installmentId: allocationData.installmentId,
+          cardPaymentId: payment.id,
+          amount: allocationData.amount,
+        });
 
         workingStorage = result.storage;
       } else {
@@ -624,14 +585,11 @@ export function registerCardPayment(
 
         if (amount <= 0) continue;
 
-        const result = applyCardPaymentToInstallment(
-          workingStorage,
-          {
-            installmentId: installment.id,
-            cardPaymentId: payment.id,
-            amount: roundMoney(amount),
-          },
-        );
+        const result = applyCardPaymentToInstallment(workingStorage, {
+          installmentId: installment.id,
+          cardPaymentId: payment.id,
+          amount: roundMoney(amount),
+        });
 
         workingStorage = result.storage;
         remainingAmount = roundMoney(remainingAmount - amount);
@@ -646,17 +604,11 @@ export function registerCardPayment(
           0,
           roundMoney(
             purchase.amount -
-              getPurchaseAllocatedAmount(
-                workingStorage,
-                purchase.id,
-              ),
+              getPurchaseAllocatedAmount(workingStorage, purchase.id),
           ),
         );
 
-        const amount = Math.min(
-          remainingAmount,
-          remainingPurchase,
-        );
+        const amount = Math.min(remainingAmount, remainingPurchase);
 
         if (amount <= 0) continue;
 
@@ -673,27 +625,17 @@ export function registerCardPayment(
     }
   }
 
-  const allocations = getPaymentAllocations(
-    workingStorage,
-    payment.id,
-  );
+  const allocations = getPaymentAllocations(workingStorage, payment.id);
 
   const allocatedAmount = roundMoney(
-    allocations.reduce(
-      (total, allocation) => total + allocation.amount,
-      0,
-    ),
+    allocations.reduce((total, allocation) => total + allocation.amount, 0),
   );
 
   if (allocatedAmount > payment.amount) {
-    throw new Error(
-      "Las aplicaciones superan el importe del pago global.",
-    );
+    throw new Error("Las aplicaciones superan el importe del pago global.");
   }
 
-  const unappliedAmount = roundMoney(
-    payment.amount - allocatedAmount,
-  );
+  const unappliedAmount = roundMoney(payment.amount - allocatedAmount);
 
   if (!saveAccountStorage(workingStorage)) {
     throw new Error(
@@ -713,6 +655,111 @@ export function registerCardPayment(
 // CONSULTAS
 // -----------------------------------------------------------------------------
 
+export function getCardPaymentAllocationTargets(
+  cardId: string,
+): CardPaymentAllocationTarget[] {
+  const storage = loadAccountStorage();
+
+  if (!storage) return [];
+
+  const card = storage.cards.find((item) => item.id === cardId);
+
+  if (!card || card.type !== "credit" || card.status !== "active") {
+    return [];
+  }
+
+  const activePlans = new Set(
+    storage.installmentPlans
+      .filter((plan) => plan.status === "active")
+      .map((plan) => plan.id),
+  );
+
+  const activePurchases = storage.purchases.filter(
+    (purchase) => purchase.cardId === cardId && purchase.status === "active",
+  );
+
+  const purchaseMap = new Map(
+    activePurchases.map((purchase) => [purchase.id, purchase]),
+  );
+
+  const installmentTargets: CardPaymentAllocationTarget[] =
+    storage.installments.flatMap((installment) => {
+      if (
+        installment.status === "paid" ||
+        !activePlans.has(installment.planId)
+      ) {
+        return [];
+      }
+
+      const plan = storage.installmentPlans.find(
+        (item) => item.id === installment.planId,
+      );
+
+      if (!plan) return [];
+
+      const purchase = purchaseMap.get(plan.cardPurchaseId);
+
+      if (!purchase || purchase.purchaseType !== "installments") {
+        return [];
+      }
+
+      const remainingAmount = getInstallmentRemaining(installment);
+
+      if (remainingAmount <= 0) return [];
+
+      return [
+        {
+          id: installment.id,
+          type: "installment",
+          description: `${purchase.description} - Parcialidad ${installment.installmentNumber} de ${plan.installmentCount}`,
+          dueDate: installment.dueDate,
+          totalAmount: roundMoney(installment.amount),
+          paidAmount: roundMoney(installment.paidAmount),
+          remainingAmount,
+        },
+      ];
+    });
+
+  const singlePurchaseTargets: CardPaymentAllocationTarget[] = activePurchases
+    .filter((purchase) => purchase.purchaseType === "single")
+    .flatMap((purchase) => {
+      const paidAmount = getPurchaseAllocatedAmount(storage, purchase.id);
+
+      const remainingAmount = Math.max(
+        0,
+        roundMoney(purchase.amount - paidAmount),
+      );
+
+      if (remainingAmount <= 0) return [];
+
+      return [
+        {
+          id: purchase.id,
+          type: "single_purchase",
+          description: purchase.description,
+          dueDate: purchase.purchaseDate,
+          totalAmount: roundMoney(purchase.amount),
+          paidAmount,
+          remainingAmount,
+        },
+      ];
+    });
+
+  const today = getLocalDateString();
+
+  installmentTargets.sort((a, b) => {
+    const priorityDifference =
+      getInstallmentPriority(a.dueDate, today) -
+      getInstallmentPriority(b.dueDate, today);
+
+    return priorityDifference || a.dueDate.localeCompare(b.dueDate);
+  });
+
+  singlePurchaseTargets.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+
+  return [...installmentTargets, ...singlePurchaseTargets];
+}
+
 /**
  * Distribuye posteriormente el saldo no aplicado de un pago global.
  * Útil cuando el usuario dejó dinero sin asignar al registrar el pago.
@@ -727,9 +774,7 @@ export function allocateCardPayment(
     throw new Error("No hay información de cuentas disponible.");
   }
 
-  const payment = storage.cardPayments.find(
-    (item) => item.id === paymentId,
-  );
+  const payment = storage.cardPayments.find((item) => item.id === paymentId);
 
   if (!payment) {
     throw new Error("No se encontró el pago global indicado.");
@@ -762,9 +807,7 @@ export function allocateCardPayment(
         .reduce((total, item) => total + item.amount, 0),
     );
 
-    const available = roundMoney(
-      payment.amount - allocatedSoFar,
-    );
+    const available = roundMoney(payment.amount - allocatedSoFar);
 
     if (allocationData.amount > available) {
       throw new Error(
@@ -790,14 +833,11 @@ export function allocateCardPayment(
         throw new Error("Debes indicar la parcialidad MSI.");
       }
 
-      const result = applyCardPaymentToInstallment(
-        workingStorage,
-        {
-          installmentId: allocationData.installmentId,
-          cardPaymentId: payment.id,
-          amount: allocationData.amount,
-        },
-      );
+      const result = applyCardPaymentToInstallment(workingStorage, {
+        installmentId: allocationData.installmentId,
+        cardPaymentId: payment.id,
+        amount: allocationData.amount,
+      });
 
       workingStorage = result.storage;
     } else {
@@ -805,10 +845,7 @@ export function allocateCardPayment(
     }
   }
 
-  const paymentAllocations = getPaymentAllocations(
-    workingStorage,
-    payment.id,
-  );
+  const paymentAllocations = getPaymentAllocations(workingStorage, payment.id);
 
   const allocatedAmount = roundMoney(
     paymentAllocations.reduce(
@@ -824,24 +861,18 @@ export function allocateCardPayment(
   }
 
   if (!saveAccountStorage(workingStorage)) {
-    throw new Error(
-      "No fue posible guardar las aplicaciones del pago global.",
-    );
+    throw new Error("No fue posible guardar las aplicaciones del pago global.");
   }
 
   return {
     payment,
     allocations: paymentAllocations,
     allocatedAmount,
-    unappliedAmount: roundMoney(
-      payment.amount - allocatedAmount,
-    ),
+    unappliedAmount: roundMoney(payment.amount - allocatedAmount),
   };
 }
 
-export function getCardPayments(
-  cardId: string,
-): CardPayment[] {
+export function getCardPayments(cardId: string): CardPayment[] {
   const storage = loadAccountStorage();
 
   if (!storage) return [];
@@ -858,40 +889,29 @@ export function getCardPaymentSummary(
 
   if (!storage) return null;
 
-  const payment = storage.cardPayments.find(
-    (item) => item.id === paymentId,
-  );
+  const payment = storage.cardPayments.find((item) => item.id === paymentId);
 
   if (!payment) return null;
 
   const allocations = getPaymentAllocations(storage, payment.id);
 
   const allocatedAmount = roundMoney(
-    allocations.reduce(
-      (total, allocation) => total + allocation.amount,
-      0,
-    ),
+    allocations.reduce((total, allocation) => total + allocation.amount, 0),
   );
 
   return {
     payment,
     allocations,
     allocatedAmount,
-    unappliedAmount: roundMoney(
-      payment.amount - allocatedAmount,
-    ),
+    unappliedAmount: roundMoney(payment.amount - allocatedAmount),
   };
 }
 
-export function getCardPaymentUnappliedAmount(
-  paymentId: string,
-): number {
+export function getCardPaymentUnappliedAmount(paymentId: string): number {
   return getCardPaymentSummary(paymentId)?.unappliedAmount ?? 0;
 }
 
-export function getCardUnappliedPaymentsTotal(
-  cardId: string,
-): number {
+export function getCardUnappliedPaymentsTotal(cardId: string): number {
   const storage = loadAccountStorage();
 
   if (!storage) return 0;
@@ -901,18 +921,11 @@ export function getCardUnappliedPaymentsTotal(
       .filter((payment) => payment.cardId === cardId)
       .reduce((total, payment) => {
         const allocatedAmount = storage.cardPaymentAllocations
-          .filter(
-            (allocation) =>
-              allocation.cardPaymentId === payment.id,
-          )
-          .reduce(
-            (sum, allocation) => sum + allocation.amount,
-            0,
-          );
+          .filter((allocation) => allocation.cardPaymentId === payment.id)
+          .reduce((sum, allocation) => sum + allocation.amount, 0);
 
-        return total + Math.max(
-          0,
-          roundMoney(payment.amount - allocatedAmount),
+        return (
+          total + Math.max(0, roundMoney(payment.amount - allocatedAmount))
         );
       }, 0),
   );

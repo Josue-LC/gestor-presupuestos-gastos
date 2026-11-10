@@ -10,6 +10,18 @@ import type {
   InstallmentPayment,
   InstallmentPlan,
 } from "@/types/account";
+import type {
+  Loan,
+  LoanInstallment,
+  LoanPayment,
+  LoanPaymentAllocation,
+} from "@/types/loan.types";
+import type {
+  CreditLine,
+  CreditLineDrawdown,
+  CreditLinePayment,
+  CreditLineCharge,
+} from "@/types/credit-line.types";
 
 import { banksData } from "@/lib/accounts-data";
 
@@ -24,6 +36,14 @@ export interface AccountStorageData {
   installments: Installment[];
   cardPayments: CardPayment[];
   cardPaymentAllocations: CardPaymentAllocation[];
+  loans: Loan[];
+  loanInstallments: LoanInstallment[];
+  loanPayments: LoanPayment[];
+  loanPaymentAllocations: LoanPaymentAllocation[];
+  creditLines: CreditLine[];
+  creditLineDrawdowns: CreditLineDrawdown[];
+  creditLinePayments: CreditLinePayment[];
+  creditLineCharges: CreditLineCharge[];
 }
 
 const ACCOUNT_TYPES = [
@@ -55,6 +75,39 @@ const CARD_PAYMENT_ALLOCATION_TYPES = [
   "installment",
 ] as const;
 
+const LOAN_TYPES = ["personal", "auto", "mortgage", "other"] as const;
+const LOAN_STATUSES = ["active", "paid", "cancelled"] as const;
+const LOAN_INTEREST_TYPES = ["fixed", "variable"] as const;
+const LOAN_PAYMENT_FREQUENCIES = ["weekly", "biweekly", "monthly"] as const;
+const LOAN_AMORTIZATION_TYPES = ["manual", "french", "german", "custom"] as const;
+const LOAN_INSTALLMENT_STATUSES = ["pending", "partial", "paid", "overdue"] as const;
+const LOAN_PAYMENT_STATUSES = ["completed", "cancelled"] as const;
+const LOAN_PAYMENT_METHODS = ["manual", "transaction"] as const;
+
+const CREDIT_LINE_STATUSES = ["active", "suspended", "closed"] as const;
+const CREDIT_LINE_INTEREST_TYPES = ["fixed", "variable"] as const;
+const CREDIT_LINE_INTEREST_METHODS = [
+  "daily_balance",
+  "average_balance",
+  "manual",
+] as const;
+const CREDIT_LINE_PAYMENT_FREQUENCIES = [
+  "weekly",
+  "biweekly",
+  "monthly",
+] as const;
+const CREDIT_LINE_DRAWDOWN_DESTINATIONS = ["account", "external"] as const;
+const CREDIT_LINE_DRAWDOWN_STATUSES = ["active", "cancelled"] as const;
+const CREDIT_LINE_PAYMENT_STATUSES = ["completed", "cancelled"] as const;
+const CREDIT_LINE_CHARGE_TYPES = [
+  "ordinary_interest",
+  "moratory_interest",
+  "commission",
+  "insurance",
+  "other",
+] as const;
+const CREDIT_LINE_CHARGE_STATUSES = ["active", "cancelled"] as const;
+
 const EMPTY_STORAGE: Omit<AccountStorageData, "banks"> = {
   accounts: [],
   cards: [],
@@ -63,6 +116,14 @@ const EMPTY_STORAGE: Omit<AccountStorageData, "banks"> = {
   installments: [],
   cardPayments: [],
   cardPaymentAllocations: [],
+  loans: [],
+  loanInstallments: [],
+  loanPayments: [],
+  loanPaymentAllocations: [],
+  creditLines: [],
+  creditLineDrawdowns: [],
+  creditLinePayments: [],
+  creditLineCharges: [],
 };
 
 // -----------------------------------------------------------------------------
@@ -506,6 +567,241 @@ function isInstallment(value: unknown): value is Installment {
   return value.status === expectedStatus;
 }
 
+
+// -----------------------------------------------------------------------------
+// VALIDACIÓN DE PRÉSTAMOS
+// -----------------------------------------------------------------------------
+
+function isLoan(value: unknown): value is Loan {
+  if (!isObject(value)) return false;
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.name) &&
+    isNonEmptyString(value.institutionId) &&
+    isOneOf(value.type, LOAN_TYPES) &&
+    isOneOf(value.status, LOAN_STATUSES) &&
+    isNullableString(value.contractNumber) &&
+    isMoney(value.contractedAmount) &&
+    isMoney(value.principalAmount) &&
+    isNonNegativeMoney(value.netDisbursedAmount) &&
+    isNonNegativeMoney(value.openingCommission) &&
+    isNonNegativeMoney(value.openingInsurance) &&
+    isNonNegativeMoney(value.financedCharges) &&
+    isFiniteNumber(value.annualInterestRate) &&
+    value.annualInterestRate >= 0 &&
+    value.annualInterestRate <= 1000 &&
+    isOneOf(value.interestType, LOAN_INTEREST_TYPES) &&
+    typeof value.termInMonths === "number" &&
+    Number.isInteger(value.termInMonths) &&
+    value.termInMonths > 0 &&
+    isOneOf(value.paymentFrequency, LOAN_PAYMENT_FREQUENCIES) &&
+    isOneOf(value.amortizationType, LOAN_AMORTIZATION_TYPES) &&
+    isValidDate(value.contractDate) &&
+    isValidDate(value.disbursementDate) &&
+    isValidDate(value.firstPaymentDate) &&
+    isValidDate(value.endDate) &&
+    isNullableString(value.receivingAccountId) &&
+    isNullableString(value.paymentAccountId) &&
+    isNullableString(value.notes) &&
+    isValidTimestamp(value.createdAt) &&
+    isValidTimestamp(value.updatedAt) &&
+    (value.paidAt === undefined || isValidTimestamp(value.paidAt)) &&
+    (value.cancelledAt === undefined || isValidTimestamp(value.cancelledAt))
+  );
+}
+
+function isLoanInstallment(value: unknown): value is LoanInstallment {
+  if (!isObject(value)) return false;
+
+  const amountsValid =
+    isNonNegativeMoney(value.principalAmount) &&
+    isNonNegativeMoney(value.interestAmount) &&
+    isNonNegativeMoney(value.commissionAmount) &&
+    isNonNegativeMoney(value.insuranceAmount) &&
+    isMoney(value.totalAmount) &&
+    isMoneyEqual(
+      value.principalAmount +
+        value.interestAmount +
+        value.commissionAmount +
+        value.insuranceAmount,
+      value.totalAmount,
+    );
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.loanId) &&
+    typeof value.installmentNumber === "number" &&
+    Number.isInteger(value.installmentNumber) &&
+    value.installmentNumber > 0 &&
+    isValidDate(value.dueDate) &&
+    amountsValid &&
+    isOneOf(value.status, LOAN_INSTALLMENT_STATUSES) &&
+    isValidTimestamp(value.createdAt)
+  );
+}
+
+function isLoanPayment(value: unknown): value is LoanPayment {
+  if (!isObject(value)) return false;
+
+  const validMethod = isOneOf(value.method, LOAN_PAYMENT_METHODS);
+  const validTransactionReference =
+    value.method === "transaction"
+      ? isNonEmptyString(value.transactionId)
+      : value.method === "manual" && value.transactionId === null;
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.loanId) &&
+    isNullableString(value.sourceAccountId) &&
+    isMoney(value.amount) &&
+    isValidDate(value.paidAt) &&
+    isOneOf(value.status, LOAN_PAYMENT_STATUSES) &&
+    validMethod &&
+    validTransactionReference &&
+    isNullableString(value.notes) &&
+    isValidTimestamp(value.createdAt)
+  );
+}
+
+function isLoanPaymentAllocation(
+  value: unknown,
+): value is LoanPaymentAllocation {
+  if (!isObject(value)) return false;
+
+  const amountsValid =
+    isNonNegativeMoney(value.principalAmount) &&
+    isNonNegativeMoney(value.interestAmount) &&
+    isNonNegativeMoney(value.commissionAmount) &&
+    isNonNegativeMoney(value.insuranceAmount) &&
+    isMoney(value.totalAmount) &&
+    isMoneyEqual(
+      value.principalAmount +
+        value.interestAmount +
+        value.commissionAmount +
+        value.insuranceAmount,
+      value.totalAmount,
+    );
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.loanPaymentId) &&
+    isNonEmptyString(value.installmentId) &&
+    amountsValid &&
+    isValidTimestamp(value.createdAt)
+  );
+}
+
+// -----------------------------------------------------------------------------
+// VALIDACIÓN DE LÍNEAS DE CRÉDITO
+// -----------------------------------------------------------------------------
+
+function isCreditLine(value: unknown): value is CreditLine {
+  if (!isObject(value)) return false;
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.name) &&
+    isNonEmptyString(value.institutionId) &&
+    isOneOf(value.status, CREDIT_LINE_STATUSES) &&
+    isNullableString(value.contractNumber) &&
+    isMoney(value.creditLimit) &&
+    isFiniteNumber(value.annualInterestRate) &&
+    value.annualInterestRate >= 0 &&
+    value.annualInterestRate <= 1000 &&
+    isOneOf(value.interestType, CREDIT_LINE_INTEREST_TYPES) &&
+    isOneOf(value.interestCalculationMethod, CREDIT_LINE_INTEREST_METHODS) &&
+    isOneOf(value.paymentFrequency, CREDIT_LINE_PAYMENT_FREQUENCIES) &&
+    isValidDay(value.cutoffDay) &&
+    isValidDay(value.paymentDueDay) &&
+    isValidDate(value.openingDate) &&
+    (value.expirationDate === null || isValidDate(value.expirationDate)) &&
+    isNullableString(value.paymentAccountId) &&
+    isNullableString(value.notes) &&
+    isValidTimestamp(value.createdAt) &&
+    isValidTimestamp(value.updatedAt) &&
+    (value.closedAt === undefined || isValidTimestamp(value.closedAt))
+  );
+}
+
+function isCreditLineDrawdown(
+  value: unknown,
+): value is CreditLineDrawdown {
+  if (!isObject(value)) return false;
+
+  const validDestination =
+    value.destinationType === "account"
+      ? isNonEmptyString(value.destinationAccountId) &&
+        value.destinationDescription === null
+      : value.destinationType === "external"
+        ? value.destinationAccountId === null &&
+          isNonEmptyString(value.destinationDescription)
+        : false;
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.creditLineId) &&
+    isNonEmptyString(value.description) &&
+    isMoney(value.amount) &&
+    isValidDate(value.drawdownDate) &&
+    isOneOf(value.destinationType, CREDIT_LINE_DRAWDOWN_DESTINATIONS) &&
+    validDestination &&
+    isNullableString(value.transactionId) &&
+    isOneOf(value.status, CREDIT_LINE_DRAWDOWN_STATUSES) &&
+    isNullableString(value.notes) &&
+    isValidTimestamp(value.createdAt)
+  );
+}
+
+function isCreditLinePayment(
+  value: unknown,
+): value is CreditLinePayment {
+  if (!isObject(value)) return false;
+
+  const amountsValid =
+    isNonNegativeMoney(value.principalPaid) &&
+    isNonNegativeMoney(value.interestPaid) &&
+    isNonNegativeMoney(value.commissionPaid) &&
+    isNonNegativeMoney(value.insurancePaid) &&
+    isMoney(value.amount) &&
+    isMoneyEqual(
+      value.principalPaid +
+        value.interestPaid +
+        value.commissionPaid +
+        value.insurancePaid,
+      value.amount,
+    );
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.creditLineId) &&
+    isNullableString(value.sourceAccountId) &&
+    isMoney(value.amount) &&
+    amountsValid &&
+    isValidDate(value.paidAt) &&
+    isOneOf(value.status, CREDIT_LINE_PAYMENT_STATUSES) &&
+    isNullableString(value.transactionId) &&
+    isNullableString(value.notes) &&
+    isValidTimestamp(value.createdAt)
+  );
+}
+
+function isCreditLineCharge(value: unknown): value is CreditLineCharge {
+  if (!isObject(value)) return false;
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.creditLineId) &&
+    isOneOf(value.type, CREDIT_LINE_CHARGE_TYPES) &&
+    isNonEmptyString(value.description) &&
+    isMoney(value.amount) &&
+    isValidDate(value.chargeDate) &&
+    typeof value.capitalized === "boolean" &&
+    isOneOf(value.status, CREDIT_LINE_CHARGE_STATUSES) &&
+    isValidTimestamp(value.createdAt)
+  );
+}
+
 // -----------------------------------------------------------------------------
 // MIGRACIÓN DE PLANES ANTERIORES
 // -----------------------------------------------------------------------------
@@ -677,6 +973,30 @@ function normalizeStorage(parsed: Record<string, unknown>): AccountStorageData {
     cardPaymentAllocations: Array.isArray(parsed.cardPaymentAllocations)
       ? parsed.cardPaymentAllocations.filter(isCardPaymentAllocation)
       : [],
+
+    loans: Array.isArray(parsed.loans) ? parsed.loans.filter(isLoan) : [],
+    loanInstallments: Array.isArray(parsed.loanInstallments)
+      ? parsed.loanInstallments.filter(isLoanInstallment)
+      : [],
+    loanPayments: Array.isArray(parsed.loanPayments)
+      ? parsed.loanPayments.filter(isLoanPayment)
+      : [],
+    loanPaymentAllocations: Array.isArray(parsed.loanPaymentAllocations)
+      ? parsed.loanPaymentAllocations.filter(isLoanPaymentAllocation)
+      : [],
+
+    creditLines: Array.isArray(parsed.creditLines)
+      ? parsed.creditLines.filter(isCreditLine)
+      : [],
+    creditLineDrawdowns: Array.isArray(parsed.creditLineDrawdowns)
+      ? parsed.creditLineDrawdowns.filter(isCreditLineDrawdown)
+      : [],
+    creditLinePayments: Array.isArray(parsed.creditLinePayments)
+      ? parsed.creditLinePayments.filter(isCreditLinePayment)
+      : [],
+    creditLineCharges: Array.isArray(parsed.creditLineCharges)
+      ? parsed.creditLineCharges.filter(isCreditLineCharge)
+      : [],
   };
 }
 
@@ -692,6 +1012,320 @@ function arePaymentIdsUnique(installments: Installment[]): boolean {
   return new Set(paymentIds).size === paymentIds.length;
 }
 
+
+
+function areLoanRelationsValid(data: AccountStorageData): boolean {
+  const bankIds = new Set(data.banks.map((bank) => bank.id));
+  const accountIds = new Set(data.accounts.map((account) => account.id));
+
+  const loanMap = new Map(data.loans.map((loan) => [loan.id, loan]));
+
+  const installmentMap = new Map(
+    data.loanInstallments.map((installment) => [
+      installment.id,
+      installment,
+    ]),
+  );
+
+  const paymentMap = new Map(
+    data.loanPayments.map((payment) => [payment.id, payment]),
+  );
+
+  // ============================================
+  // VALIDACIÓN DE PRÉSTAMOS
+  // ============================================
+
+  for (const loan of data.loans) {
+    // El banco debe existir.
+    if (!bankIds.has(loan.institutionId)) {
+      return false;
+    }
+
+    // La cuenta receptora debe existir.
+    if (
+      loan.receivingAccountId !== null &&
+      !accountIds.has(loan.receivingAccountId)
+    ) {
+      return false;
+    }
+
+    // La cuenta habitual de pago debe existir.
+    if (
+      loan.paymentAccountId !== null &&
+      !accountIds.has(loan.paymentAccountId)
+    ) {
+      return false;
+    }
+  }
+
+  // ============================================
+  // VALIDACIÓN DE PARCIALIDADES
+  // ============================================
+
+  for (const installment of data.loanInstallments) {
+    if (!loanMap.has(installment.loanId)) {
+      return false;
+    }
+  }
+
+  // ============================================
+  // VALIDACIÓN DE PAGOS
+  // ============================================
+
+  for (const payment of data.loanPayments) {
+    if (!loanMap.has(payment.loanId)) {
+      return false;
+    }
+
+    if (
+      payment.sourceAccountId !== null &&
+      !accountIds.has(payment.sourceAccountId)
+    ) {
+      return false;
+    }
+  }
+
+  // ============================================
+  // ACUMULADORES DE ASIGNACIONES
+  // ============================================
+
+  const allocatedByPayment = new Map<string, number>();
+
+  const allocatedByInstallment = new Map<
+    string,
+    {
+      principal: number;
+      interest: number;
+      commission: number;
+      insurance: number;
+      total: number;
+    }
+  >();
+
+  // ============================================
+  // VALIDACIÓN DE ASIGNACIONES
+  // ============================================
+
+  for (const allocation of data.loanPaymentAllocations) {
+    const payment = paymentMap.get(allocation.loanPaymentId);
+
+    const installment = installmentMap.get(
+      allocation.installmentId,
+    );
+
+    // El pago y la parcialidad deben existir.
+    if (!payment || !installment) {
+      return false;
+    }
+
+    // El pago y la parcialidad deben pertenecer
+    // al mismo préstamo.
+    if (payment.loanId !== installment.loanId) {
+      return false;
+    }
+
+    // No se permiten asignaciones de pagos cancelados.
+    if (payment.status !== "completed") {
+      return false;
+    }
+
+    // Acumular importe asignado al pago.
+    allocatedByPayment.set(
+      payment.id,
+      roundMoney(
+        (allocatedByPayment.get(payment.id) ?? 0) +
+          allocation.totalAmount,
+      ),
+    );
+
+    // Obtener acumulados actuales de la parcialidad.
+    const current = allocatedByInstallment.get(installment.id) ?? {
+      principal: 0,
+      interest: 0,
+      commission: 0,
+      insurance: 0,
+      total: 0,
+    };
+
+    // Acumular cada concepto por separado.
+    allocatedByInstallment.set(installment.id, {
+      principal: roundMoney(
+        current.principal + allocation.principalAmount,
+      ),
+
+      interest: roundMoney(
+        current.interest + allocation.interestAmount,
+      ),
+
+      commission: roundMoney(
+        current.commission + allocation.commissionAmount,
+      ),
+
+      insurance: roundMoney(
+        current.insurance + allocation.insuranceAmount,
+      ),
+
+      total: roundMoney(
+        current.total + allocation.totalAmount,
+      ),
+    });
+  }
+
+  // ============================================
+  // VALIDACIÓN DEL IMPORTE DE CADA PAGO
+  // ============================================
+
+  for (const [paymentId, total] of allocatedByPayment) {
+    const payment = paymentMap.get(paymentId);
+
+    if (!payment || total > payment.amount) {
+      return false;
+    }
+  }
+
+  // ============================================
+  // VALIDACIÓN DE IMPORTES POR PARCIALIDAD
+  // ============================================
+
+  for (const [installmentId, allocated] of allocatedByInstallment) {
+    const installment = installmentMap.get(installmentId);
+
+    if (!installment) {
+      return false;
+    }
+
+    // El capital asignado no puede superar
+    // el capital programado.
+    if (allocated.principal > installment.principalAmount) {
+      return false;
+    }
+
+    // Los intereses asignados no pueden superar
+    // los intereses programados.
+    if (allocated.interest > installment.interestAmount) {
+      return false;
+    }
+
+    // Las comisiones asignadas no pueden superar
+    // las comisiones programadas.
+    if (allocated.commission > installment.commissionAmount) {
+      return false;
+    }
+
+    // Los seguros asignados no pueden superar
+    // los seguros programados.
+    if (allocated.insurance > installment.insuranceAmount) {
+      return false;
+    }
+
+    // La asignación total no puede superar
+    // el importe de la parcialidad.
+    if (allocated.total > installment.totalAmount) {
+      return false;
+    }
+
+    // ============================================
+    // VALIDACIÓN DEL ESTADO DE LA PARCIALIDAD
+    // ============================================
+
+    const isFullyPaid = isMoneyEqual(
+      allocated.total,
+      installment.totalAmount,
+    );
+
+    const hasPartialPayment =
+      allocated.total > 0 && !isFullyPaid;
+
+    const hasNoPayment = allocated.total === 0;
+
+    // Si está completamente pagada, debe tener
+    // el estado paid.
+    if (isFullyPaid && installment.status !== "paid") {
+      return false;
+    }
+
+    // Si tiene un pago parcial, debe estar
+    // partial o overdue.
+    if (
+      hasPartialPayment &&
+      installment.status !== "partial" &&
+      installment.status !== "overdue"
+    ) {
+      return false;
+    }
+
+    // Si no tiene pagos, debe estar
+    // pending o overdue.
+    if (
+      hasNoPayment &&
+      installment.status !== "pending" &&
+      installment.status !== "overdue"
+    ) {
+      return false;
+    }
+  }
+
+  // ============================================
+  // PARCIALIDADES SIN ASIGNACIONES
+  // ============================================
+
+  for (const installment of data.loanInstallments) {
+    // Si ya tiene asignaciones, se validó anteriormente.
+    if (allocatedByInstallment.has(installment.id)) {
+      continue;
+    }
+
+    // Una parcialidad sin pagos no puede aparecer
+    // como parcial ni como pagada.
+    if (
+      installment.status !== "pending" &&
+      installment.status !== "overdue"
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+
+function areCreditLineRelationsValid(data: AccountStorageData): boolean {
+  const bankIds = new Set(data.banks.map((bank) => bank.id));
+  const accountIds = new Set(data.accounts.map((account) => account.id));
+  const creditLineIds = new Set(data.creditLines.map((line) => line.id));
+
+  for (const line of data.creditLines) {
+    if (!bankIds.has(line.institutionId)) return false;
+    if (
+      line.paymentAccountId !== null &&
+      !accountIds.has(line.paymentAccountId)
+    ) return false;
+  }
+
+  for (const drawdown of data.creditLineDrawdowns) {
+    if (!creditLineIds.has(drawdown.creditLineId)) return false;
+
+    if (drawdown.destinationType === "account") {
+      const accountId = drawdown.destinationAccountId;
+      if (accountId === null || !accountIds.has(accountId)) return false;
+    }
+  }
+
+  for (const payment of data.creditLinePayments) {
+    if (!creditLineIds.has(payment.creditLineId)) return false;
+    if (
+      payment.sourceAccountId !== null &&
+      !accountIds.has(payment.sourceAccountId)
+    ) return false;
+  }
+
+  for (const charge of data.creditLineCharges) {
+    if (!creditLineIds.has(charge.creditLineId)) return false;
+  }
+
+  return true;
+}
+
 function isValidStorageStructure(data: AccountStorageData): boolean {
   return (
     isArrayOf(data.banks, isBank) &&
@@ -702,6 +1336,14 @@ function isValidStorageStructure(data: AccountStorageData): boolean {
     isArrayOf(data.installments, isInstallment) &&
     isArrayOf(data.cardPayments, isCardPayment) &&
     isArrayOf(data.cardPaymentAllocations, isCardPaymentAllocation) &&
+    isArrayOf(data.loans, isLoan) &&
+    isArrayOf(data.loanInstallments, isLoanInstallment) &&
+    isArrayOf(data.loanPayments, isLoanPayment) &&
+    isArrayOf(data.loanPaymentAllocations, isLoanPaymentAllocation) &&
+    isArrayOf(data.creditLines, isCreditLine) &&
+    isArrayOf(data.creditLineDrawdowns, isCreditLineDrawdown) &&
+    isArrayOf(data.creditLinePayments, isCreditLinePayment) &&
+    isArrayOf(data.creditLineCharges, isCreditLineCharge) &&
     isUniqueById(data.banks) &&
     isUniqueById(data.accounts) &&
     isUniqueById(data.cards) &&
@@ -710,7 +1352,17 @@ function isValidStorageStructure(data: AccountStorageData): boolean {
     isUniqueById(data.installments) &&
     isUniqueById(data.cardPayments) &&
     isUniqueById(data.cardPaymentAllocations) &&
-    arePaymentIdsUnique(data.installments)
+    isUniqueById(data.loans) &&
+    isUniqueById(data.loanInstallments) &&
+    isUniqueById(data.loanPayments) &&
+    isUniqueById(data.loanPaymentAllocations) &&
+    isUniqueById(data.creditLines) &&
+    isUniqueById(data.creditLineDrawdowns) &&
+    isUniqueById(data.creditLinePayments) &&
+    isUniqueById(data.creditLineCharges) &&
+    arePaymentIdsUnique(data.installments) &&
+    areLoanRelationsValid(data) &&
+    areCreditLineRelationsValid(data)
   );
 }
 
@@ -736,6 +1388,14 @@ function hasUnrecoverableStoredRecords(
       key: "cardPaymentAllocations",
       validator: isCardPaymentAllocation,
     },
+    { key: "loans", validator: isLoan },
+    { key: "loanInstallments", validator: isLoanInstallment },
+    { key: "loanPayments", validator: isLoanPayment },
+    { key: "loanPaymentAllocations", validator: isLoanPaymentAllocation },
+    { key: "creditLines", validator: isCreditLine },
+    { key: "creditLineDrawdowns", validator: isCreditLineDrawdown },
+    { key: "creditLinePayments", validator: isCreditLinePayment },
+    { key: "creditLineCharges", validator: isCreditLineCharge },
   ];
 
   for (const collection of collections) {
@@ -899,6 +1559,14 @@ export function saveAccountStorage(data: AccountStorageData): boolean {
       installments: data.installments,
       cardPayments: data.cardPayments,
       cardPaymentAllocations: data.cardPaymentAllocations,
+      loans: data.loans,
+      loanInstallments: data.loanInstallments,
+      loanPayments: data.loanPayments,
+      loanPaymentAllocations: data.loanPaymentAllocations,
+      creditLines: data.creditLines,
+      creditLineDrawdowns: data.creditLineDrawdowns,
+      creditLinePayments: data.creditLinePayments,
+      creditLineCharges: data.creditLineCharges,
     };
 
     if (!isValidStorageStructure(normalizedStorage)) {

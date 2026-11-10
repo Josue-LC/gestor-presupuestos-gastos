@@ -15,6 +15,8 @@ import type {
   Bank,
   BankCard,
   CardPurchase,
+  CardPayment,
+  CardPaymentAllocation,
   Installment,
 } from "@/types/account";
 
@@ -133,6 +135,10 @@ export default function CardDetailPage() {
   const [card, setCard] = useState<BankCard | null>(null);
   const [bank, setBank] = useState<Bank | null>(null);
   const [purchases, setPurchases] = useState<CardPurchase[]>([]);
+  const [cardPayments, setCardPayments] = useState<CardPayment[]>([]);
+  const [cardPaymentAllocations, setCardPaymentAllocations] = useState<
+    CardPaymentAllocation[]
+  >([]);
   const [summary, setSummary] = useState<
     ReturnType<typeof getCardSummary>
   >(null);
@@ -200,6 +206,8 @@ export default function CardDetailPage() {
         setCard(null);
         setBank(null);
         setPurchases([]);
+        setCardPayments([]);
+        setCardPaymentAllocations([]);
         setSummary(null);
         setAccounts([]);
         return;
@@ -216,8 +224,20 @@ export default function CardDetailPage() {
       const activeAccounts = accountStorage.accounts.filter(
         (account) => account.status === "active",
       );
+      const cardPaymentsData = accountStorage.cardPayments.filter(
+        (payment) => payment.cardId === cardId,
+      );
+      const cardPaymentIds = new Set(
+        cardPaymentsData.map((payment) => payment.id),
+      );
+      const cardPaymentAllocationsData =
+        accountStorage.cardPaymentAllocations.filter((allocation) =>
+          cardPaymentIds.has(allocation.cardPaymentId),
+        );
 
       setAccounts(activeAccounts);
+      setCardPayments(cardPaymentsData);
+      setCardPaymentAllocations(cardPaymentAllocationsData);
       setCard(cardData);
       setBank(bankData);
       setPurchases(purchaseData);
@@ -649,6 +669,48 @@ export default function CardDetailPage() {
 
                     const isExpanded = expandedPurchases.has(purchase.id);
 
+                    const purchaseAllocations = !isInstallmentPurchase
+                      ? cardPaymentAllocations.filter(
+                          (allocation) =>
+                            allocation.type === "single_purchase" &&
+                            allocation.purchaseId === purchase.id,
+                        )
+                      : [];
+
+                    const singlePurchasePaid = purchaseAllocations.reduce(
+                      (total, allocation) => total + allocation.amount,
+                      0,
+                    );
+                    const singlePurchaseRemaining = Math.max(
+                      0,
+                      purchase.amount - singlePurchasePaid,
+                    );
+                    const singlePurchaseProgress =
+                      purchase.amount > 0
+                        ? Math.min(
+                            100,
+                            (singlePurchasePaid / purchase.amount) * 100,
+                          )
+                        : 0;
+                    const singlePurchaseStatus =
+                      singlePurchaseRemaining <= 0
+                        ? "paid"
+                        : singlePurchasePaid > 0
+                          ? "partial"
+                          : "pending";
+
+                    const purchasePaymentHistory = purchaseAllocations
+                      .flatMap((allocation) => {
+                        const payment = cardPayments.find(
+                          (item) => item.id === allocation.cardPaymentId,
+                        );
+
+                        return payment ? [{ allocation, payment }] : [];
+                      })
+                      .sort((a, b) =>
+                        b.payment.paidAt.localeCompare(a.payment.paidAt),
+                      );
+
                     const plan = isInstallmentPurchase
                       ? getInstallmentPlanByPurchaseId(purchase.id)
                       : undefined;
@@ -687,9 +749,28 @@ export default function CardDetailPage() {
                         {/* Fila de compra */}
                         <tr className="transition hover:bg-background/50">
                           <td className="px-6 py-5">
-                            <p className="text-sm font-semibold text-foreground">
-                              {purchase.description}
-                            </p>
+                            <div className="flex flex-col items-start gap-2">
+                              <p className="text-sm font-semibold text-foreground">
+                                {purchase.description}
+                              </p>
+                              {!isInstallmentPurchase && (
+                                <span
+                                  className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                    singlePurchaseStatus === "paid"
+                                      ? "bg-green-100 text-green-700"
+                                      : singlePurchaseStatus === "partial"
+                                        ? "bg-amber-100 text-amber-700"
+                                        : "bg-gray-100 text-gray-600"
+                                  }`}
+                                >
+                                  {singlePurchaseStatus === "paid"
+                                    ? "Liquidada"
+                                    : singlePurchaseStatus === "partial"
+                                      ? "Pago parcial"
+                                      : "Pendiente"}
+                                </span>
+                              )}
+                            </div>
                           </td>
 
                           <td className="whitespace-nowrap px-6 py-5 text-sm text-muted">
@@ -709,28 +790,149 @@ export default function CardDetailPage() {
                           </td>
 
                           <td className="px-6 py-5 text-right">
-                            {isInstallmentPurchase && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  togglePurchaseDetails(purchase.id)
-                                }
-                                aria-expanded={isExpanded}
-                                className="inline-flex items-center justify-end gap-2 whitespace-nowrap text-sm font-semibold text-foreground transition hover:text-primary"
-                              >
-                                {isExpanded
-                                  ? "Ocultar detalle"
-                                  : "Ver parcialidades"}
+                            <button
+                              type="button"
+                              onClick={() => togglePurchaseDetails(purchase.id)}
+                              aria-expanded={isExpanded}
+                              className="inline-flex items-center justify-end gap-2 whitespace-nowrap text-sm font-semibold text-foreground transition hover:text-primary"
+                            >
+                              {isExpanded
+                                ? "Ocultar detalle"
+                                : isInstallmentPurchase
+                                  ? "Ver parcialidades"
+                                  : "Ver pagos"}
 
-                                <ChevronDown
-                                  className={`h-4 w-4 transition-transform ${
-                                    isExpanded ? "rotate-180" : ""
-                                  }`}
-                                />
-                              </button>
-                            )}
+                              <ChevronDown
+                                className={`h-4 w-4 transition-transform ${
+                                  isExpanded ? "rotate-180" : ""
+                                }`}
+                              />
+                            </button>
                           </td>
                         </tr>
+
+                        {/* Detalle de pagos de compra de contado */}
+                        {!isInstallmentPurchase && isExpanded && (
+                          <tr>
+                            <td
+                              colSpan={5}
+                              className="bg-background/60 p-4 sm:p-6"
+                            >
+                              <div className="space-y-5">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                  <div>
+                                    <h3 className="text-base font-bold text-foreground">
+                                      Estado de la compra
+                                    </h3>
+                                    <p className="mt-1 text-sm text-muted">
+                                      Seguimiento de los pagos aplicados a esta compra.
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
+                                      singlePurchaseStatus === "paid"
+                                        ? "bg-green-100 text-green-700"
+                                        : singlePurchaseStatus === "partial"
+                                          ? "bg-amber-100 text-amber-700"
+                                          : "bg-gray-100 text-gray-600"
+                                    }`}
+                                  >
+                                    {singlePurchaseStatus === "paid" && (
+                                      <span aria-hidden="true">✓</span>
+                                    )}
+                                    {singlePurchaseStatus === "paid"
+                                      ? "Compra liquidada"
+                                      : singlePurchaseStatus === "partial"
+                                        ? "Pago parcial"
+                                        : "Sin pagos aplicados"}
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                  <div className="rounded-xl bg-surface-card p-4 shadow-sm">
+                                    <p className="text-xs text-muted">Importe original</p>
+                                    <p className="mt-2 text-base font-bold text-foreground">
+                                      {currencyFormatter.format(purchase.amount)}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-xl bg-surface-card p-4 shadow-sm">
+                                    <p className="text-xs text-muted">Total pagado</p>
+                                    <p className="mt-2 text-base font-bold text-green-700">
+                                      {currencyFormatter.format(singlePurchasePaid)}
+                                    </p>
+                                  </div>
+                                  <div className="rounded-xl bg-surface-card p-4 shadow-sm">
+                                    <p className="text-xs text-muted">Saldo pendiente</p>
+                                    <p className="mt-2 text-base font-bold text-foreground">
+                                      {currencyFormatter.format(singlePurchaseRemaining)}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <div className="mb-2 flex items-center justify-between">
+                                    <p className="text-xs font-medium text-muted">
+                                      Progreso de pago
+                                    </p>
+                                    <p className="text-xs font-semibold text-foreground">
+                                      {Math.round(singlePurchaseProgress)}%
+                                    </p>
+                                  </div>
+                                  <div className="h-2 overflow-hidden rounded-full bg-surface-card">
+                                    <div
+                                      className="h-full rounded-full bg-green-600 transition-all"
+                                      style={{ width: `${singlePurchaseProgress}%` }}
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="space-y-3">
+                                  <h4 className="text-sm font-bold text-foreground">
+                                    Historial de pagos
+                                  </h4>
+
+                                  {purchasePaymentHistory.length === 0 ? (
+                                    <div className="rounded-xl border border-dashed border-hairline bg-surface-card p-5 text-center">
+                                      <p className="text-sm text-muted">
+                                        Todavía no hay pagos aplicados a esta compra.
+                                      </p>
+                                    </div>
+                                  ) : (
+                                    <div className="overflow-hidden rounded-xl border border-hairline bg-surface-card">
+                                      {purchasePaymentHistory.map(
+                                        ({ allocation, payment }, index) => (
+                                          <div
+                                            key={allocation.id}
+                                            className={`flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
+                                              index > 0 ? "border-t border-hairline" : ""
+                                            }`}
+                                          >
+                                            <div className="flex items-start gap-3">
+                                              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-green-100 text-green-700">
+                                                <Wallet className="h-4 w-4" />
+                                              </div>
+                                              <div>
+                                                <p className="text-sm font-semibold text-foreground">
+                                                  Pago aplicado
+                                                </p>
+                                                <p className="mt-0.5 text-xs text-muted">
+                                                  {formatDate(payment.paidAt)}
+                                                </p>
+                                              </div>
+                                            </div>
+                                            <p className="text-sm font-bold text-green-700 sm:text-right">
+                                              +{currencyFormatter.format(allocation.amount)}
+                                            </p>
+                                          </div>
+                                        ),
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
 
                         {/* Detalle de parcialidades */}
                         {isInstallmentPurchase && isExpanded && (

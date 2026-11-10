@@ -1,13 +1,19 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { z } from "zod";
 
 import type { Transaction } from "@/components/transactions/TransactionList";
 import { getTransactionCategoryNames } from "@/lib/transaction-categories";
 import { useAlert } from "@/context/AlertContext";
+
+import {
+  getCardPaymentAllocationTargets,
+  type CardPaymentAllocationTarget,
+  type ManualCardPaymentAllocation,
+} from "@/services/card-payment.service";
 
 export type TransactionAccountOption = {
   id: string;
@@ -23,6 +29,10 @@ export type NewTransactionData = {
   date: string;
   amount: number;
   type: "income" | "expense" | "transfer";
+  cardPayment?: {
+    cardId: string;
+    allocations: ManualCardPaymentAllocation[];
+  };
 };
 
 interface TransactionFormProps {
@@ -78,7 +88,9 @@ function getToday() {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60_000;
 
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+  return new Date(now.getTime() - offset)
+    .toISOString()
+    .slice(0, 10);
 }
 
 function getDateInputValue(date: string) {
@@ -101,6 +113,15 @@ function getAccountId(account: TransactionAccount): string {
 
 function getAccountLabel(account: TransactionAccount): string {
   return typeof account === "string" ? account : account.name;
+}
+
+function formatCurrency(amount: number): string {
+  return amount.toLocaleString("es-MX", {
+    style: "currency",
+    currency: "MXN",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 export default function TransactionForm({
@@ -153,7 +174,10 @@ export default function TransactionForm({
   );
 
   const [account, setAccount] = useState(
-    initialAccounts[0] || initialAccount || accountOptions[0]?.id || "",
+    initialAccounts[0] ||
+      initialAccount ||
+      accountOptions[0]?.id ||
+      "",
   );
 
   const [category, setCategory] = useState(() => {
@@ -174,8 +198,145 @@ export default function TransactionForm({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // ---------------------------------------------------------------------------
+  // ASIGNACIÓN MANUAL DE PAGOS A TARJETAS
+  // ---------------------------------------------------------------------------
+
+  const [allocationTargets, setAllocationTargets] = useState<
+    CardPaymentAllocationTarget[]
+  >([]);
+
+  const [allocationAmounts, setAllocationAmounts] = useState<
+    Record<string, string>
+  >({});
+
+  const selectedCardId = destinationAccount.startsWith("card:")
+    ? destinationAccount.replace("card:", "")
+    : null;
+
+  const isCreditCardTransfer =
+    type === "transfer" && Boolean(selectedCardId);
+
   const availableCategories =
     type === "transfer" ? [] : getTransactionCategoryNames(type);
+
+  const manualAllocations = useMemo<ManualCardPaymentAllocation[]>(
+    () => {
+      return allocationTargets.flatMap((target) => {
+        const amount = Number(allocationAmounts[target.id]);
+
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return [];
+        }
+
+        return [
+          {
+            type: target.type,
+            ...(target.type === "single_purchase"
+              ? { purchaseId: target.id }
+              : { installmentId: target.id }),
+            amount: Math.round(amount * 100) / 100,
+          },
+        ];
+      });
+    },
+    [allocationTargets, allocationAmounts],
+  );
+
+  const totalAllocated = useMemo(
+    () =>
+      Math.round(
+        manualAllocations.reduce(
+          (total, allocation) => total + allocation.amount,
+          0,
+        ) * 100,
+      ) / 100,
+    [manualAllocations],
+  );
+
+  const transferAmount = Number(amount) || 0;
+
+  const unappliedAmount = Math.max(
+    0,
+    Math.round((transferAmount - totalAllocated) * 100) / 100,
+  );
+
+  // Consultar los conceptos pendientes cuando se selecciona una tarjeta.
+  useEffect(() => {
+    if (!isCreditCardTransfer || !selectedCardId) {
+      setAllocationTargets([]);
+      setAllocationAmounts({});
+      return;
+    }
+
+    try {
+      const targets = getCardPaymentAllocationTargets(selectedCardId);
+
+      setAllocationTargets(targets);
+      setAllocationAmounts({});
+    } catch (error) {
+      console.error(
+        "Error al consultar los conceptos pendientes:",
+        error,
+      );
+
+      setAllocationTargets([]);
+      setAllocationAmounts({});
+
+      toast.error(
+        "No fue posible consultar los conceptos pendientes de la tarjeta.",
+      );
+    }
+  }, [isCreditCardTransfer, selectedCardId]);
+
+  // Controlar los importes asignados a cada concepto.
+  function handleAllocationChange(
+    target: CardPaymentAllocationTarget,
+    value: string,
+  ) {
+    if (value !== "" && !/^\d*\.?\d{0,2}$/.test(value)) {
+      return;
+    }
+
+    const parsedAmount = Number(value);
+
+    if (
+      value !== "" &&
+      (!Number.isFinite(parsedAmount) ||
+        parsedAmount > target.remainingAmount)
+    ) {
+      toast.error(
+        `El importe máximo para este concepto es ${formatCurrency(
+          target.remainingAmount,
+        )}.`,
+      );
+      return;
+    }
+
+    const previousAmount =
+      Number(allocationAmounts[target.id]) || 0;
+
+    const newTotal =
+      Math.round(
+        (totalAllocated - previousAmount + parsedAmount) * 100,
+      ) / 100;
+
+    if (value !== "" && newTotal > transferAmount) {
+      toast.error(
+        "La distribución no puede superar el importe de la transferencia.",
+      );
+      return;
+    }
+
+    setAllocationAmounts((previous) => ({
+      ...previous,
+      [target.id]: value,
+    }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // ENVÍO DEL FORMULARIO
+  // ---------------------------------------------------------------------------
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -187,18 +348,24 @@ export default function TransactionForm({
       amount: Number(amount),
       date,
       account,
-      category: type === "transfer" ? "Transferencia propia" : category,
+      category:
+        type === "transfer"
+          ? "Transferencia propia"
+          : category,
     });
 
     if (!parsed.success) {
       toast.error(
-        parsed.error.issues[0]?.message ?? "Revisa los datos del movimiento.",
+        parsed.error.issues[0]?.message ??
+          "Revisa los datos del movimiento.",
         "Datos incompletos o inválidos",
       );
       return;
     }
 
-    const availableAccountIds = accountOptions.map((item) => item.id);
+    const availableAccountIds = accountOptions.map(
+      (item) => item.id,
+    );
 
     if (!availableAccountIds.includes(parsed.data.account)) {
       toast.error(
@@ -225,11 +392,12 @@ export default function TransactionForm({
         return;
       }
 
-      const availableDestinationIds = destinationAccountOptions.map(
-        (item) => item.id,
-      );
+      const availableDestinationIds =
+        destinationAccountOptions.map((item) => item.id);
 
-      if (!availableDestinationIds.includes(destinationAccount)) {
+      if (
+        !availableDestinationIds.includes(destinationAccount)
+      ) {
         toast.error(
           "La cuenta de destino no existe o ya no está disponible.",
           "Cuenta inválida",
@@ -241,6 +409,55 @@ export default function TransactionForm({
         toast.error(
           "La cuenta de origen y destino deben ser diferentes.",
           "Transferencia inválida",
+        );
+        return;
+      }
+    }
+
+    // Validaciones específicas de pagos a tarjetas de crédito.
+    if (isCreditCardTransfer && selectedCardId) {
+      if (date > getToday()) {
+        toast.error(
+          "La fecha de pago a tarjeta no puede ser futura.",
+          "Fecha inválida",
+        );
+        return;
+      }
+
+      if (manualAllocations.length === 0) {
+        toast.error(
+          "Debes asignar al menos un importe a una compra o parcialidad.",
+          "Distribución pendiente",
+        );
+        return;
+      }
+
+      if (totalAllocated > parsed.data.amount) {
+        toast.error(
+          "Las asignaciones superan el importe de la transferencia.",
+        );
+        return;
+      }
+
+      const hasInvalidAllocation = manualAllocations.some(
+        (allocation) => {
+          const target = allocationTargets.find((item) =>
+            item.type === "single_purchase"
+              ? item.id === allocation.purchaseId
+              : item.id === allocation.installmentId,
+          );
+
+          return (
+            !target ||
+            allocation.amount <= 0 ||
+            allocation.amount > target.remainingAmount
+          );
+        },
+      );
+
+      if (hasInvalidAllocation) {
+        toast.error(
+          "Uno o más importes asignados ya no son válidos. Revisa los conceptos.",
         );
         return;
       }
@@ -262,6 +479,15 @@ export default function TransactionForm({
           ? -Math.abs(parsed.data.amount)
           : Math.abs(parsed.data.amount),
       type,
+
+      ...(isCreditCardTransfer && selectedCardId
+        ? {
+            cardPayment: {
+              cardId: selectedCardId,
+              allocations: manualAllocations,
+            },
+          }
+        : {}),
     };
 
     setIsSubmitting(true);
@@ -272,7 +498,9 @@ export default function TransactionForm({
       console.error("Error al guardar el movimiento:", error);
 
       toast.error(
-        "No fue posible guardar el movimiento. Inténtalo nuevamente.",
+        error instanceof Error
+          ? error.message
+          : "No fue posible guardar el movimiento. Inténtalo nuevamente.",
         "Error al guardar",
       );
 
@@ -280,8 +508,16 @@ export default function TransactionForm({
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // ESTILOS
+  // ---------------------------------------------------------------------------
+
   const inputClassName =
-    "mt-1.5 w-full rounded-xl border border-hairline bg-background px-3.5 py-3 text-sm text-foreground outline-none transition focus:border-foreground";
+    "mt-1.5 w-full rounded-xl border border-hairline bg-background px-3.5 py-3 text-sm text-foreground outline-none transition focus:border-foreground disabled:cursor-not-allowed disabled:opacity-50";
+
+  // ---------------------------------------------------------------------------
+  // RENDER
+  // ---------------------------------------------------------------------------
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-black/40 p-4 backdrop-blur-sm">
@@ -291,6 +527,7 @@ export default function TransactionForm({
         aria-labelledby="transaction-form-title"
         className="my-auto w-full max-w-xl rounded-3xl bg-background p-5 shadow-2xl sm:p-7"
       >
+        {/* ENCABEZADO */}
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">
@@ -335,6 +572,7 @@ export default function TransactionForm({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+          {/* TIPO DE MOVIMIENTO */}
           <div>
             <label className="mb-2 block text-sm font-semibold text-foreground">
               Tipo de movimiento
@@ -368,6 +606,7 @@ export default function TransactionForm({
             </div>
           </div>
 
+          {/* DESCRIPCIÓN */}
           <div>
             <label
               htmlFor="transaction-description"
@@ -379,7 +618,9 @@ export default function TransactionForm({
             <input
               id="transaction-description"
               value={description}
-              onChange={(event) => setDescription(event.target.value)}
+              onChange={(event) =>
+                setDescription(event.target.value)
+              }
               placeholder="Ej. Nómina, supermercado, ahorro..."
               maxLength={120}
               disabled={isSubmitting}
@@ -387,6 +628,7 @@ export default function TransactionForm({
             />
           </div>
 
+          {/* IMPORTE Y FECHA */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label
@@ -403,7 +645,9 @@ export default function TransactionForm({
                 step="0.01"
                 inputMode="decimal"
                 value={amount}
-                onChange={(event) => setAmount(event.target.value)}
+                onChange={(event) =>
+                  setAmount(event.target.value)
+                }
                 placeholder="0.00"
                 disabled={isSubmitting}
                 className={inputClassName}
@@ -429,6 +673,7 @@ export default function TransactionForm({
             </div>
           </div>
 
+          {/* CUENTA DE ORIGEN */}
           <div>
             <label
               htmlFor="transaction-account"
@@ -454,6 +699,7 @@ export default function TransactionForm({
             </select>
           </div>
 
+          {/* DESTINO O CATEGORÍA */}
           {type === "transfer" ? (
             <div>
               <label
@@ -493,7 +739,9 @@ export default function TransactionForm({
               <select
                 id="transaction-category"
                 value={category}
-                onChange={(event) => setCategory(event.target.value)}
+                onChange={(event) =>
+                  setCategory(event.target.value)
+                }
                 disabled={isSubmitting}
                 className={inputClassName}
               >
@@ -508,6 +756,129 @@ export default function TransactionForm({
             </div>
           )}
 
+          {/* DISTRIBUCIÓN MANUAL DE PAGO A TARJETA */}
+          {isCreditCardTransfer && (
+            <div className="space-y-4 rounded-2xl border border-hairline bg-surface-card p-4">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  Distribución del pago
+                </h3>
+
+                <p className="mt-1 text-xs text-muted">
+                  Selecciona cuánto deseas aplicar a cada compra o
+                  parcialidad.
+                </p>
+              </div>
+
+              {allocationTargets.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-hairline p-4 text-center">
+                  <p className="text-sm font-medium text-foreground">
+                    No hay conceptos pendientes
+                  </p>
+
+                  <p className="mt-1 text-xs text-muted">
+                    Esta tarjeta no tiene compras de contado ni
+                    parcialidades con saldo pendiente.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {allocationTargets.map((target) => (
+                    <div
+                      key={target.id}
+                      className="rounded-xl border border-hairline bg-background p-3"
+                    >
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-foreground">
+                            {target.description}
+                          </p>
+
+                          <p className="mt-1 text-xs text-muted">
+                            {target.type === "single_purchase"
+                              ? "Compra de contado"
+                              : "Parcialidad MSI"}
+                          </p>
+
+                          <p className="mt-1 text-xs text-muted">
+                            Fecha: {target.dueDate}
+                          </p>
+
+                          <p className="mt-1 text-xs text-muted">
+                            Pendiente:{" "}
+                            {formatCurrency(target.remainingAmount)}
+                          </p>
+                        </div>
+
+                        <div className="w-full sm:w-36">
+                          <label
+                            htmlFor={`allocation-${target.id}`}
+                            className="text-xs font-medium text-muted"
+                          >
+                            Importe a aplicar
+                          </label>
+
+                          <input
+                            id={`allocation-${target.id}`}
+                            type="number"
+                            min="0"
+                            max={target.remainingAmount}
+                            step="0.01"
+                            inputMode="decimal"
+                            placeholder="0.00"
+                            value={allocationAmounts[target.id] ?? ""}
+                            onChange={(event) =>
+                              handleAllocationChange(
+                                target,
+                                event.target.value,
+                              )
+                            }
+                            disabled={isSubmitting}
+                            className={inputClassName}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* RESUMEN DE DISTRIBUCIÓN */}
+              <div className="space-y-2 border-t border-hairline pt-3">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted">
+                    Importe de transferencia
+                  </span>
+
+                  <span className="font-medium text-foreground">
+                    {formatCurrency(transferAmount)}
+                  </span>
+                </div>
+
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted">
+                    Total aplicado
+                  </span>
+
+                  <span className="font-medium text-foreground">
+                    {formatCurrency(totalAllocated)}
+                  </span>
+                </div>
+
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted">
+                    Sin aplicar
+                  </span>
+
+                  <span className="font-semibold text-foreground">
+                    {formatCurrency(unappliedAmount)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* BOTONES */}
           <div className="flex flex-col-reverse gap-3 border-t border-hairline pt-5 sm:flex-row sm:justify-end">
             <button
               type="button"

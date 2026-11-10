@@ -1,3 +1,4 @@
+// bank.service.ts
 import type { Bank } from "@/types/account";
 
 import {

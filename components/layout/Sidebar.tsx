@@ -1,4 +1,3 @@
-
 "use client";
 
 import Link from "next/link";
@@ -24,6 +23,11 @@ const navigation = [
     label: "Tarjetas",
     href: "/cards",
     icon: "card",
+  },
+  {
+    label: "Préstamos",
+    href: "/loans",
+    icon: "loan",
   },
   {
     label: "Presupuestos",
@@ -103,6 +107,11 @@ function SidebarIcon({ name }: { name: string }) {
         <path d="m19.4 15 .1.1 1.4 1.1-1.5 2.6-1.7-.6a8 8 0 0 1-1.8 1l-.3 1.8h-3l-.3-1.8a8 8 0 0 1-1.8-1l-1.7.6-1.5-2.6L7.2 15a8 8 0 0 1 0-2l-1.4-1.1 1.5-2.6 1.7.6a8 8 0 0 1 1.8-1l.3-1.8h3l.3 1.8a8 8 0 0 1 1.8 1l1.7-.6 1.5 2.6-1.4 1.1a8 8 0 0 1 0 2z" />
       </>
     ),
+    loan: (
+      <>
+        <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14h-2v-2h2zm0-4h-2V7h2z" />
+      </>
+    ),
     plus: <path d="M12 5v14M5 12h14" />,
     walletLogo: (
       <>
@@ -167,9 +176,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             <span className="text-base font-bold leading-tight tracking-tight text-foreground">
               Gestor
             </span>
-            <span className="text-xs text-muted">
-              Finanzas personales
-            </span>
+            <span className="text-xs text-muted">Finanzas personales</span>
           </span>
         </Link>
 
@@ -184,10 +191,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         </Link>
 
         {/* Navegación */}
-        <nav
-          aria-label="Navegación principal"
-          className="flex flex-col gap-1"
-        >
+        <nav aria-label="Navegación principal" className="flex flex-col gap-1">
           {navigation.map((item) => {
             const isActive =
               pathname === item.href ||
@@ -225,9 +229,7 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
             <p className="truncate font-semibold text-foreground">
               Usuario de prueba
             </p>
-            <p className="truncate text-xs text-muted">
-              Cuenta personal
-            </p>
+            <p className="truncate text-xs text-muted">Cuenta personal</p>
           </div>
         </div>
 

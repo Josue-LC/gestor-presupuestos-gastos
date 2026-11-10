@@ -1,3 +1,4 @@
+// card-payment-registration.service.ts
 import type { Transaction } from "@/components/transactions/TransactionList";
 import type {
   CardPaymentAllocationMode,
