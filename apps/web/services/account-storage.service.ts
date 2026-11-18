@@ -22,6 +22,10 @@ import type {
   CreditLinePayment,
   CreditLineCharge,
 } from "@/types/credit-line.types";
+import type {
+  ScheduledPayment,
+  ScheduledPaymentOccurrence,
+} from "@/types/scheduled-payment.types";
 
 import { banksData } from "@/lib/accounts-data";
 
@@ -44,6 +48,8 @@ export interface AccountStorageData {
   creditLineDrawdowns: CreditLineDrawdown[];
   creditLinePayments: CreditLinePayment[];
   creditLineCharges: CreditLineCharge[];
+  scheduledPayments: ScheduledPayment[];
+  scheduledPaymentOccurrences: ScheduledPaymentOccurrence[];
 }
 
 const ACCOUNT_TYPES = [
@@ -79,8 +85,18 @@ const LOAN_TYPES = ["personal", "auto", "mortgage", "other"] as const;
 const LOAN_STATUSES = ["active", "paid", "cancelled"] as const;
 const LOAN_INTEREST_TYPES = ["fixed", "variable"] as const;
 const LOAN_PAYMENT_FREQUENCIES = ["weekly", "biweekly", "monthly"] as const;
-const LOAN_AMORTIZATION_TYPES = ["manual", "french", "german", "custom"] as const;
-const LOAN_INSTALLMENT_STATUSES = ["pending", "partial", "paid", "overdue"] as const;
+const LOAN_AMORTIZATION_TYPES = [
+  "manual",
+  "french",
+  "german",
+  "custom",
+] as const;
+const LOAN_INSTALLMENT_STATUSES = [
+  "pending",
+  "partial",
+  "paid",
+  "overdue",
+] as const;
 const LOAN_PAYMENT_STATUSES = ["completed", "cancelled"] as const;
 const LOAN_PAYMENT_METHODS = ["manual", "transaction"] as const;
 
@@ -108,6 +124,23 @@ const CREDIT_LINE_CHARGE_TYPES = [
 ] as const;
 const CREDIT_LINE_CHARGE_STATUSES = ["active", "cancelled"] as const;
 
+const SCHEDULED_PAYMENT_FREQUENCIES = [
+  "weekly",
+  "biweekly",
+  "monthly",
+  "bimonthly",
+  "quarterly",
+  "yearly",
+] as const;
+
+const SCHEDULED_PAYMENT_AMOUNT_TYPES = ["fixed", "variable"] as const;
+const SCHEDULED_PAYMENT_STATUSES = ["active", "paused", "cancelled"] as const;
+const SCHEDULED_PAYMENT_OCCURRENCE_STATUSES = [
+  "pending",
+  "paid",
+  "skipped",
+] as const;
+
 const EMPTY_STORAGE: Omit<AccountStorageData, "banks"> = {
   accounts: [],
   cards: [],
@@ -124,6 +157,8 @@ const EMPTY_STORAGE: Omit<AccountStorageData, "banks"> = {
   creditLineDrawdowns: [],
   creditLinePayments: [],
   creditLineCharges: [],
+  scheduledPayments: [],
+  scheduledPaymentOccurrences: [],
 };
 
 // -----------------------------------------------------------------------------
@@ -567,7 +602,6 @@ function isInstallment(value: unknown): value is Installment {
   return value.status === expectedStatus;
 }
 
-
 // -----------------------------------------------------------------------------
 // VALIDACIÓN DE PRÉSTAMOS
 // -----------------------------------------------------------------------------
@@ -604,6 +638,8 @@ function isLoan(value: unknown): value is Loan {
     isNullableString(value.receivingAccountId) &&
     isNullableString(value.paymentAccountId) &&
     isNullableString(value.notes) &&
+    (value.disbursementTransactionId === undefined ||
+      isNullableString(value.disbursementTransactionId)) &&
     isValidTimestamp(value.createdAt) &&
     isValidTimestamp(value.updatedAt) &&
     (value.paidAt === undefined || isValidTimestamp(value.paidAt)) &&
@@ -724,9 +760,7 @@ function isCreditLine(value: unknown): value is CreditLine {
   );
 }
 
-function isCreditLineDrawdown(
-  value: unknown,
-): value is CreditLineDrawdown {
+function isCreditLineDrawdown(value: unknown): value is CreditLineDrawdown {
   if (!isObject(value)) return false;
 
   const validDestination =
@@ -753,9 +787,7 @@ function isCreditLineDrawdown(
   );
 }
 
-function isCreditLinePayment(
-  value: unknown,
-): value is CreditLinePayment {
+function isCreditLinePayment(value: unknown): value is CreditLinePayment {
   if (!isObject(value)) return false;
 
   const amountsValid =
@@ -799,6 +831,72 @@ function isCreditLineCharge(value: unknown): value is CreditLineCharge {
     typeof value.capitalized === "boolean" &&
     isOneOf(value.status, CREDIT_LINE_CHARGE_STATUSES) &&
     isValidTimestamp(value.createdAt)
+  );
+}
+
+// -----------------------------------------------------------------------------
+// VALIDACIÓN DE PAGOS RECURRENTES
+// -----------------------------------------------------------------------------
+
+function isScheduledPayment(value: unknown): value is ScheduledPayment {
+  if (!isObject(value)) return false;
+
+  const validAmount =
+    value.amountType === "fixed"
+      ? isMoney(value.amount)
+      : value.amountType === "variable" &&
+        (value.amount === null || isMoney(value.amount));
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.name) &&
+    isNullableString(value.description) &&
+    isNonEmptyString(value.category) &&
+    isOneOf(value.frequency, SCHEDULED_PAYMENT_FREQUENCIES) &&
+    isOneOf(value.amountType, SCHEDULED_PAYMENT_AMOUNT_TYPES) &&
+    validAmount &&
+    isValidDate(value.firstDueDate) &&
+    isValidDate(value.nextDueDate) &&
+    (value.endDate === null || isValidDate(value.endDate)) &&
+    (value.endDate === null || value.endDate >= value.firstDueDate) &&
+    isNullableString(value.defaultAccountId) &&
+    isOneOf(value.status, SCHEDULED_PAYMENT_STATUSES) &&
+    isNullableString(value.notes) &&
+    isValidTimestamp(value.createdAt) &&
+    isValidTimestamp(value.updatedAt) &&
+    (value.cancelledAt === undefined ||
+      isValidTimestamp(value.cancelledAt))
+  );
+}
+
+function isScheduledPaymentOccurrence(
+  value: unknown,
+): value is ScheduledPaymentOccurrence {
+  if (!isObject(value)) return false;
+
+  const validAmount = value.amount === null || isMoney(value.amount);
+
+  const validPaymentData =
+    value.status === "paid"
+      ? isMoney(value.paidAmount) &&
+        isValidDate(value.paidAt) &&
+        isNullableString(value.transactionId)
+      : value.status === "pending" || value.status === "skipped"
+        ? value.paidAmount === null &&
+          value.paidAt === null &&
+          value.transactionId === null
+        : false;
+
+  return (
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.scheduledPaymentId) &&
+    isValidDate(value.dueDate) &&
+    validAmount &&
+    isOneOf(value.status, SCHEDULED_PAYMENT_OCCURRENCE_STATUSES) &&
+    (value.paidAmount === null || isMoney(value.paidAmount)) &&
+    validPaymentData &&
+    isValidTimestamp(value.createdAt) &&
+    isValidTimestamp(value.updatedAt)
   );
 }
 
@@ -997,6 +1095,12 @@ function normalizeStorage(parsed: Record<string, unknown>): AccountStorageData {
     creditLineCharges: Array.isArray(parsed.creditLineCharges)
       ? parsed.creditLineCharges.filter(isCreditLineCharge)
       : [],
+    scheduledPayments: Array.isArray(parsed.scheduledPayments)
+      ? parsed.scheduledPayments.filter(isScheduledPayment)
+      : [],
+    scheduledPaymentOccurrences: Array.isArray(parsed.scheduledPaymentOccurrences)
+      ? parsed.scheduledPaymentOccurrences.filter(isScheduledPaymentOccurrence)
+      : [],
   };
 }
 
@@ -1012,8 +1116,6 @@ function arePaymentIdsUnique(installments: Installment[]): boolean {
   return new Set(paymentIds).size === paymentIds.length;
 }
 
-
-
 function areLoanRelationsValid(data: AccountStorageData): boolean {
   const bankIds = new Set(data.banks.map((bank) => bank.id));
   const accountIds = new Set(data.accounts.map((account) => account.id));
@@ -1021,10 +1123,7 @@ function areLoanRelationsValid(data: AccountStorageData): boolean {
   const loanMap = new Map(data.loans.map((loan) => [loan.id, loan]));
 
   const installmentMap = new Map(
-    data.loanInstallments.map((installment) => [
-      installment.id,
-      installment,
-    ]),
+    data.loanInstallments.map((installment) => [installment.id, installment]),
   );
 
   const paymentMap = new Map(
@@ -1109,9 +1208,7 @@ function areLoanRelationsValid(data: AccountStorageData): boolean {
   for (const allocation of data.loanPaymentAllocations) {
     const payment = paymentMap.get(allocation.loanPaymentId);
 
-    const installment = installmentMap.get(
-      allocation.installmentId,
-    );
+    const installment = installmentMap.get(allocation.installmentId);
 
     // El pago y la parcialidad deben existir.
     if (!payment || !installment) {
@@ -1133,8 +1230,7 @@ function areLoanRelationsValid(data: AccountStorageData): boolean {
     allocatedByPayment.set(
       payment.id,
       roundMoney(
-        (allocatedByPayment.get(payment.id) ?? 0) +
-          allocation.totalAmount,
+        (allocatedByPayment.get(payment.id) ?? 0) + allocation.totalAmount,
       ),
     );
 
@@ -1149,25 +1245,15 @@ function areLoanRelationsValid(data: AccountStorageData): boolean {
 
     // Acumular cada concepto por separado.
     allocatedByInstallment.set(installment.id, {
-      principal: roundMoney(
-        current.principal + allocation.principalAmount,
-      ),
+      principal: roundMoney(current.principal + allocation.principalAmount),
 
-      interest: roundMoney(
-        current.interest + allocation.interestAmount,
-      ),
+      interest: roundMoney(current.interest + allocation.interestAmount),
 
-      commission: roundMoney(
-        current.commission + allocation.commissionAmount,
-      ),
+      commission: roundMoney(current.commission + allocation.commissionAmount),
 
-      insurance: roundMoney(
-        current.insurance + allocation.insuranceAmount,
-      ),
+      insurance: roundMoney(current.insurance + allocation.insuranceAmount),
 
-      total: roundMoney(
-        current.total + allocation.totalAmount,
-      ),
+      total: roundMoney(current.total + allocation.totalAmount),
     });
   }
 
@@ -1228,13 +1314,9 @@ function areLoanRelationsValid(data: AccountStorageData): boolean {
     // VALIDACIÓN DEL ESTADO DE LA PARCIALIDAD
     // ============================================
 
-    const isFullyPaid = isMoneyEqual(
-      allocated.total,
-      installment.totalAmount,
-    );
+    const isFullyPaid = isMoneyEqual(allocated.total, installment.totalAmount);
 
-    const hasPartialPayment =
-      allocated.total > 0 && !isFullyPaid;
+    const hasPartialPayment = allocated.total > 0 && !isFullyPaid;
 
     const hasNoPayment = allocated.total === 0;
 
@@ -1277,17 +1359,13 @@ function areLoanRelationsValid(data: AccountStorageData): boolean {
 
     // Una parcialidad sin pagos no puede aparecer
     // como parcial ni como pagada.
-    if (
-      installment.status !== "pending" &&
-      installment.status !== "overdue"
-    ) {
+    if (installment.status !== "pending" && installment.status !== "overdue") {
       return false;
     }
   }
 
   return true;
 }
-
 
 function areCreditLineRelationsValid(data: AccountStorageData): boolean {
   const bankIds = new Set(data.banks.map((bank) => bank.id));
@@ -1299,7 +1377,8 @@ function areCreditLineRelationsValid(data: AccountStorageData): boolean {
     if (
       line.paymentAccountId !== null &&
       !accountIds.has(line.paymentAccountId)
-    ) return false;
+    )
+      return false;
   }
 
   for (const drawdown of data.creditLineDrawdowns) {
@@ -1316,11 +1395,47 @@ function areCreditLineRelationsValid(data: AccountStorageData): boolean {
     if (
       payment.sourceAccountId !== null &&
       !accountIds.has(payment.sourceAccountId)
-    ) return false;
+    )
+      return false;
   }
 
   for (const charge of data.creditLineCharges) {
     if (!creditLineIds.has(charge.creditLineId)) return false;
+  }
+
+  return true;
+}
+
+function areScheduledPaymentRelationsValid(
+  data: AccountStorageData,
+): boolean {
+  const accountIds = new Set(data.accounts.map((account) => account.id));
+  const scheduledPaymentIds = new Set(
+    data.scheduledPayments.map((payment) => payment.id),
+  );
+  const occurrenceKeys = new Set<string>();
+
+  for (const payment of data.scheduledPayments) {
+    if (
+      payment.defaultAccountId !== null &&
+      !accountIds.has(payment.defaultAccountId)
+    ) {
+      return false;
+    }
+  }
+
+  for (const occurrence of data.scheduledPaymentOccurrences) {
+    if (!scheduledPaymentIds.has(occurrence.scheduledPaymentId)) {
+      return false;
+    }
+
+    const key = `${occurrence.scheduledPaymentId}:${occurrence.dueDate}`;
+
+    if (occurrenceKeys.has(key)) {
+      return false;
+    }
+
+    occurrenceKeys.add(key);
   }
 
   return true;
@@ -1344,6 +1459,8 @@ function isValidStorageStructure(data: AccountStorageData): boolean {
     isArrayOf(data.creditLineDrawdowns, isCreditLineDrawdown) &&
     isArrayOf(data.creditLinePayments, isCreditLinePayment) &&
     isArrayOf(data.creditLineCharges, isCreditLineCharge) &&
+    isArrayOf(data.scheduledPayments, isScheduledPayment) &&
+    isArrayOf(data.scheduledPaymentOccurrences, isScheduledPaymentOccurrence) &&
     isUniqueById(data.banks) &&
     isUniqueById(data.accounts) &&
     isUniqueById(data.cards) &&
@@ -1360,9 +1477,12 @@ function isValidStorageStructure(data: AccountStorageData): boolean {
     isUniqueById(data.creditLineDrawdowns) &&
     isUniqueById(data.creditLinePayments) &&
     isUniqueById(data.creditLineCharges) &&
+    isUniqueById(data.scheduledPayments) &&
+    isUniqueById(data.scheduledPaymentOccurrences) &&
     arePaymentIdsUnique(data.installments) &&
     areLoanRelationsValid(data) &&
-    areCreditLineRelationsValid(data)
+    areCreditLineRelationsValid(data) &&
+    areScheduledPaymentRelationsValid(data)
   );
 }
 
@@ -1396,6 +1516,11 @@ function hasUnrecoverableStoredRecords(
     { key: "creditLineDrawdowns", validator: isCreditLineDrawdown },
     { key: "creditLinePayments", validator: isCreditLinePayment },
     { key: "creditLineCharges", validator: isCreditLineCharge },
+    { key: "scheduledPayments", validator: isScheduledPayment },
+    {
+      key: "scheduledPaymentOccurrences",
+      validator: isScheduledPaymentOccurrence,
+    },
   ];
 
   for (const collection of collections) {
@@ -1567,6 +1692,8 @@ export function saveAccountStorage(data: AccountStorageData): boolean {
       creditLineDrawdowns: data.creditLineDrawdowns,
       creditLinePayments: data.creditLinePayments,
       creditLineCharges: data.creditLineCharges,
+      scheduledPayments: data.scheduledPayments,
+      scheduledPaymentOccurrences: data.scheduledPaymentOccurrences,
     };
 
     if (!isValidStorageStructure(normalizedStorage)) {
