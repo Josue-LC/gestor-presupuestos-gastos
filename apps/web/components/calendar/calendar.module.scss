@@ -1,0 +1,277 @@
+
+.calendarWrapper {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.weekdays,
+.daysGrid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.weekdays {
+  border-bottom: 1px solid var(--color-hairline, #e5e7eb);
+}
+
+.weekday {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 4px;
+  color: var(--color-muted, #777);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.daysGrid {
+  gap: 1px;
+  background: var(--color-hairline, #e5e7eb);
+}
+
+.dayCell {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 116px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  overflow: hidden;
+  border: 0;
+  background: var(--color-surface-card, #fff);
+  color: var(--color-foreground, #171717);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+
+  &:hover {
+    background: var(--color-surface-container-low, #f8f8fa);
+  }
+
+  &:focus-visible {
+    z-index: 1;
+    outline: 2px solid var(--color-primary, #7656d6);
+    outline-offset: -2px;
+  }
+}
+
+.dayNumber {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: var(--color-foreground, #171717);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.otherMonth {
+  background: var(--color-surface-container-low, #fafafa);
+
+  .dayNumber {
+    color: var(--color-muted, #aaa);
+  }
+
+  .event {
+    opacity: 0.55;
+  }
+}
+
+.today {
+  .dayNumber {
+    background: var(--color-primary, #7656d6);
+    color: #fff;
+  }
+}
+
+.selectedDay {
+  z-index: 1;
+  background: var(--color-surface-container-low, #f8f8fa);
+  box-shadow: inset 0 0 0 2px var(--color-primary, #7656d6);
+}
+
+.dayEvents {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.event {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  overflow: hidden;
+  border-radius: 4px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.eventTitle {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eventRecurring {
+  background: rgb(16 185 129 / 13%);
+  color: #059669;
+}
+
+.eventInstallment {
+  background: rgb(59 130 246 / 13%);
+  color: #2563eb;
+}
+
+.eventLoan {
+  background: rgb(139 92 246 / 13%);
+  color: #7c3aed;
+}
+
+.eventCreditCard {
+  background: rgb(249 115 22 / 13%);
+  color: #ea580c;
+}
+
+.eventSkipped {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.moreEvents {
+  padding: 2px 4px;
+  color: var(--color-muted, #777);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.mobileEventCount {
+  display: none;
+}
+
+.eventDetail {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.eventDetailIndicator {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+
+.statusPending {
+  color: #d97706;
+}
+
+.statusPaid {
+  color: #059669;
+}
+
+.statusOverdue {
+  color: #dc2626;
+}
+
+.statusSkipped {
+  color: var(--color-muted, #888);
+}
+
+.nextEvent {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover {
+    opacity: 0.75;
+  }
+
+  &:focus-visible {
+    border-radius: 4px;
+    outline: 2px solid var(--color-primary, #7656d6);
+    outline-offset: 4px;
+  }
+}
+
+.nextEventIndicator {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+@media (max-width: 900px) {
+  .dayCell {
+    min-height: 100px;
+    padding: 8px;
+  }
+}
+
+@media (max-width: 640px) {
+  .weekday {
+    padding: 12px 2px;
+    font-size: 0.58rem;
+  }
+
+  .dayCell {
+    min-height: 76px;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 2px;
+  }
+
+  .dayNumber {
+    width: 25px;
+    height: 25px;
+    font-size: 0.72rem;
+  }
+
+  .dayEvents {
+    display: none;
+  }
+
+  .mobileEventCount {
+    display: inline-flex;
+    min-width: 17px;
+    height: 17px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--color-surface-container-high, #eee);
+    color: var(--color-muted, #666);
+    font-size: 0.6rem;
+    font-weight: 700;
+  }
+}
+
+@media (max-width: 380px) {
+  .dayCell {
+    min-height: 64px;
+  }
+
+  .weekday {
+    font-size: 0.52rem;
+  }
+}

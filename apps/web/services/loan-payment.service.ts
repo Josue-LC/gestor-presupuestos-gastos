@@ -29,11 +29,7 @@ import {
 // TIPOS
 // -----------------------------------------------------------------------------
 
-type AllocationConcept =
-  | "interest"
-  | "commission"
-  | "insurance"
-  | "principal";
+type AllocationConcept = "interest" | "commission" | "insurance" | "principal";
 
 export interface RegisterLoanPaymentInput {
   loanId: string;
@@ -126,14 +122,10 @@ function persistPaymentWithTransaction(
   previousTransactionStorage: TransactionStorage | null,
   updatedTransactionStorage: TransactionStorage,
 ): void {
-  const transactionSaved = saveTransactionStorage(
-    updatedTransactionStorage,
-  );
+  const transactionSaved = saveTransactionStorage(updatedTransactionStorage);
 
   if (!transactionSaved) {
-    throw new Error(
-      "No fue posible guardar el movimiento asociado al pago.",
-    );
+    throw new Error("No fue posible guardar el movimiento asociado al pago.");
   }
 
   const accountSaved = saveAccountStorage(accountStorage);
@@ -145,9 +137,7 @@ function persistPaymentWithTransaction(
   let rollbackSuccessful = false;
 
   if (previousTransactionStorage) {
-    rollbackSuccessful = saveTransactionStorage(
-      previousTransactionStorage,
-    );
+    rollbackSuccessful = saveTransactionStorage(previousTransactionStorage);
   } else {
     clearTransactionStorage();
     rollbackSuccessful = true;
@@ -168,10 +158,7 @@ function persistPaymentWithTransaction(
 // CONSULTAS INTERNAS
 // -----------------------------------------------------------------------------
 
-function getLoanOrThrow(
-  loanId: string,
-  loans: Loan[],
-): Loan {
+function getLoanOrThrow(loanId: string, loans: Loan[]): Loan {
   const loan = loans.find((item) => item.id === loanId);
 
   if (!loan) {
@@ -190,8 +177,7 @@ function getActiveAllocations(
     payments
       .filter(
         (payment) =>
-          payment.loanId === loanId &&
-          payment.status === "completed",
+          payment.loanId === loanId && payment.status === "completed",
       )
       .map((payment) => payment.id),
   );
@@ -255,46 +241,26 @@ function getInstallmentRemainingAmounts(
   installment: LoanInstallment,
   allocations: LoanPaymentAllocation[],
 ) {
-  const allocated = getAllocatedAmounts(
-    installment.id,
-    allocations,
-  );
+  const allocated = getAllocatedAmounts(installment.id, allocations);
 
   return {
     principal: roundMoney(
-      Math.max(
-        0,
-        installment.principalAmount - allocated.principal,
-      ),
+      Math.max(0, installment.principalAmount - allocated.principal),
     ),
 
     interest: roundMoney(
-      Math.max(
-        0,
-        installment.interestAmount - allocated.interest,
-      ),
+      Math.max(0, installment.interestAmount - allocated.interest),
     ),
 
     commission: roundMoney(
-      Math.max(
-        0,
-        installment.commissionAmount - allocated.commission,
-      ),
+      Math.max(0, installment.commissionAmount - allocated.commission),
     ),
 
     insurance: roundMoney(
-      Math.max(
-        0,
-        installment.insuranceAmount - allocated.insurance,
-      ),
+      Math.max(0, installment.insuranceAmount - allocated.insurance),
     ),
 
-    total: roundMoney(
-      Math.max(
-        0,
-        installment.totalAmount - allocated.total,
-      ),
-    ),
+    total: roundMoney(Math.max(0, installment.totalAmount - allocated.total)),
   };
 }
 
@@ -318,9 +284,7 @@ function calculateLoanOutstanding(
 // VALIDACIÓN DE PRIORIDADES
 // -----------------------------------------------------------------------------
 
-function validateAllocationPriority(
-  priority: AllocationConcept[],
-): void {
+function validateAllocationPriority(priority: AllocationConcept[]): void {
   const validConcepts: AllocationConcept[] = [
     "principal",
     "interest",
@@ -331,9 +295,7 @@ function validateAllocationPriority(
   if (
     priority.length !== validConcepts.length ||
     new Set(priority).size !== validConcepts.length ||
-    !priority.every((concept) =>
-      validConcepts.includes(concept),
-    )
+    !priority.every((concept) => validConcepts.includes(concept))
   ) {
     throw new Error(
       "La prioridad de distribución debe incluir una sola vez cada concepto.",
@@ -362,10 +324,7 @@ function createAllocation(
   const insuranceAmount = roundMoney(amounts.insurance);
 
   const totalAmount = roundMoney(
-    principalAmount +
-      interestAmount +
-      commissionAmount +
-      insuranceAmount,
+    principalAmount + interestAmount + commissionAmount + insuranceAmount,
   );
 
   return {
@@ -407,10 +366,10 @@ function distributePayment(
       break;
     }
 
-    const remainingConcepts = getInstallmentRemainingAmounts(
-      installment,
-      [...existingAllocations, ...newAllocations],
-    );
+    const remainingConcepts = getInstallmentRemainingAmounts(installment, [
+      ...existingAllocations,
+      ...newAllocations,
+    ]);
 
     if (remainingConcepts.total <= MONEY_EPSILON) {
       continue;
@@ -435,15 +394,11 @@ function distributePayment(
         continue;
       }
 
-      const applied = roundMoney(
-        Math.min(remainingPayment, available),
-      );
+      const applied = roundMoney(Math.min(remainingPayment, available));
 
       amounts[concept] = applied;
 
-      remainingPayment = roundMoney(
-        remainingPayment - applied,
-      );
+      remainingPayment = roundMoney(remainingPayment - applied);
     }
 
     const allocationTotal = roundMoney(
@@ -455,12 +410,7 @@ function distributePayment(
 
     if (allocationTotal > MONEY_EPSILON) {
       newAllocations.push(
-        createAllocation(
-          paymentId,
-          installment.id,
-          amounts,
-          createdAt,
-        ),
+        createAllocation(paymentId, installment.id, amounts, createdAt),
       );
     }
   }
@@ -493,17 +443,11 @@ function recalculateInstallmentStatuses(
       return installment;
     }
 
-    const allocated = getAllocatedAmounts(
-      installment.id,
-      allocations,
-    );
+    const allocated = getAllocatedAmounts(installment.id, allocations);
 
     let status: LoanInstallmentStatus;
 
-    if (
-      allocated.total >=
-      installment.totalAmount - MONEY_EPSILON
-    ) {
+    if (allocated.total >= installment.totalAmount - MONEY_EPSILON) {
       status = "paid";
     } else if (getDateOnly(installment.dueDate) < today) {
       status = "overdue";
@@ -531,9 +475,7 @@ function updateLoanStatus(
 
   const allPaid =
     loanInstallments.length > 0 &&
-    loanInstallments.every(
-      (installment) => installment.status === "paid",
-    );
+    loanInstallments.every((installment) => installment.status === "paid");
 
   if (allPaid) {
     return {
@@ -576,9 +518,7 @@ function validatePaymentInput(
   }
 
   if (!isValidAmount(input.amount)) {
-    throw new Error(
-      "El importe del pago debe ser mayor a cero.",
-    );
+    throw new Error("El importe del pago debe ser mayor a cero.");
   }
 
   const sourceAccount = storage.accounts.find(
@@ -590,9 +530,7 @@ function validatePaymentInput(
   }
 
   if (sourceAccount.status !== "active") {
-    throw new Error(
-      "No puedes registrar un pago desde una cuenta archivada.",
-    );
+    throw new Error("No puedes registrar un pago desde una cuenta archivada.");
   }
 
   if (input.paidAt && Number.isNaN(Date.parse(input.paidAt))) {
@@ -604,28 +542,60 @@ function validatePaymentInput(
 // CREACIÓN DEL MOVIMIENTO
 // -----------------------------------------------------------------------------
 
+
 function createLoanPaymentTransaction(
   loan: Loan,
   payment: LoanPayment,
   sourceAccountId: string,
   timestamp: string,
+  allocations: LoanPaymentAllocation[],
 ): Transaction {
+  const breakdown = allocations.reduce(
+    (total, allocation) => ({
+      principalAmount: roundMoney(
+        total.principalAmount + allocation.principalAmount,
+      ),
+      interestAmount: roundMoney(
+        total.interestAmount + allocation.interestAmount,
+      ),
+      commissionAmount: roundMoney(
+        total.commissionAmount + allocation.commissionAmount,
+      ),
+      insuranceAmount: roundMoney(
+        total.insuranceAmount + allocation.insuranceAmount,
+      ),
+    }),
+    {
+      principalAmount: 0,
+      interestAmount: 0,
+      commissionAmount: 0,
+      insuranceAmount: 0,
+    },
+  );
+
   return {
     id: `transaction-${generateId()}`,
     description: `Pago de préstamo: ${loan.name}`,
     category: "Pago de préstamo",
 
-    // El destino no es una cuenta bancaria.
-    // Se utiliza un identificador propio del préstamo.
-    account: `${sourceAccountId} → loan:${loan.id}`,
+    // Ahora es un egreso directo de la cuenta bancaria.
+    account: sourceAccountId,
 
     date: getDateOnly(payment.paidAt),
     registeredAt: timestamp,
     amount: payment.amount,
-    type: "transfer",
+    type: "expense",
     status: "active",
+
+    // Conservamos el desglose para los reportes financieros.
+    loanPaymentBreakdown: {
+      loanId: loan.id,
+      loanPaymentId: payment.id,
+      ...breakdown,
+    },
   };
 }
+
 
 // -----------------------------------------------------------------------------
 // REGISTRAR PAGO
@@ -647,21 +617,15 @@ export function registerLoanPayment(
 ): LoanPaymentResult {
   const storage = loadAccountStorage();
 
-  const loan = getLoanOrThrow(
-    input.loanId,
-    storage.loans,
-  );
+  const loan = getLoanOrThrow(input.loanId, storage.loans);
 
   if (loan.status !== "active") {
-    throw new Error(
-      "Solo puedes registrar pagos en préstamos activos.",
-    );
+    throw new Error("Solo puedes registrar pagos en préstamos activos.");
   }
 
   // Si no se indica una cuenta, utilizamos la cuenta
   // configurada como predeterminada en el préstamo.
-  const sourceAccountId =
-    input.sourceAccountId ?? loan.paymentAccountId;
+  const sourceAccountId = input.sourceAccountId ?? loan.paymentAccountId;
 
   if (!sourceAccountId) {
     throw new Error(
@@ -669,24 +633,17 @@ export function registerLoanPayment(
     );
   }
 
-  validatePaymentInput(
-    input,
-    storage,
-    sourceAccountId,
-  );
+  validatePaymentInput(input, storage, sourceAccountId);
 
   const loanInstallments = storage.loanInstallments.filter(
     (installment) => installment.loanId === loan.id,
   );
 
   if (loanInstallments.length === 0) {
-    throw new Error(
-      "El préstamo no tiene parcialidades registradas.",
-    );
+    throw new Error("El préstamo no tiene parcialidades registradas.");
   }
 
-  const priority =
-    input.allocationPriority ?? DEFAULT_ALLOCATION_PRIORITY;
+  const priority = input.allocationPriority ?? DEFAULT_ALLOCATION_PRIORITY;
 
   validateAllocationPriority(priority);
 
@@ -713,8 +670,8 @@ export function registerLoanPayment(
   const paymentId = generateId();
 
   const paidAt = input.paidAt
-    ? new Date(input.paidAt).toISOString()
-    : timestamp;
+    ? getDateOnly(input.paidAt)
+    : getDateOnly(timestamp);
 
   // ---------------------------------------------------------------------------
   // REGISTRO DEL PAGO
@@ -757,29 +714,24 @@ export function registerLoanPayment(
     updatedAllocations,
   );
 
-  const updatedLoan = updateLoanStatus(
-    loan,
-    updatedInstallments,
-    timestamp,
-  );
+  const updatedLoan = updateLoanStatus(loan, updatedInstallments, timestamp);
 
   // ---------------------------------------------------------------------------
   // CREACIÓN DE TRANSFERENCIA
   // ---------------------------------------------------------------------------
 
-  const previousTransactionStorage =
-    loadTransactionStorage();
+  const previousTransactionStorage = loadTransactionStorage();
 
   const transactionStorage =
-    previousTransactionStorage ??
-    getEmptyTransactionStorage();
+    previousTransactionStorage ?? getEmptyTransactionStorage();
 
-  const transaction = createLoanPaymentTransaction(
-    loan,
-    payment,
-    sourceAccountId,
-    timestamp,
-  );
+const transaction = createLoanPaymentTransaction(
+  loan,
+  payment,
+  sourceAccountId,
+  timestamp,
+  allocations,
+);
 
   // Vinculamos el pago con el movimiento generado.
   const linkedPayment: LoanPayment = {
@@ -787,8 +739,7 @@ export function registerLoanPayment(
     transactionId: transaction.id,
   };
 
-  const auditEvent =
-    createTransactionAuditEvent(transaction);
+  const auditEvent = createTransactionAuditEvent(transaction);
 
   // ---------------------------------------------------------------------------
   // ACTUALIZACIÓN DE ALMACENAMIENTO DE CUENTAS
@@ -801,10 +752,7 @@ export function registerLoanPayment(
       item.id === loan.id ? updatedLoan : item,
     ),
 
-    loanPayments: [
-      ...storage.loanPayments,
-      linkedPayment,
-    ],
+    loanPayments: [...storage.loanPayments, linkedPayment],
 
     loanPaymentAllocations: updatedAllocations,
 
@@ -818,15 +766,9 @@ export function registerLoanPayment(
   const updatedTransactionStorage: TransactionStorage = {
     ...transactionStorage,
 
-    transactions: [
-      transaction,
-      ...transactionStorage.transactions,
-    ],
+    transactions: [transaction, ...transactionStorage.transactions],
 
-    auditEvents: [
-      auditEvent,
-      ...transactionStorage.auditEvents,
-    ],
+    auditEvents: [auditEvent, ...transactionStorage.auditEvents],
   };
 
   // Ambos almacenamientos se guardan de forma coordinada.
@@ -859,14 +801,10 @@ export function registerLoanPayment(
  * El pago permanece en el historial con estado cancelled.
  * Sus asignaciones dejan de afectar el saldo pendiente.
  */
-export function cancelLoanPayment(
-  paymentId: string,
-): LoanPayment {
+export function cancelLoanPayment(paymentId: string): LoanPayment {
   const storage = loadAccountStorage();
 
-  const payment = storage.loanPayments.find(
-    (item) => item.id === paymentId,
-  );
+  const payment = storage.loanPayments.find((item) => item.id === paymentId);
 
   if (!payment) {
     throw new Error("No se encontró el pago.");
@@ -876,10 +814,7 @@ export function cancelLoanPayment(
     throw new Error("Este pago ya está cancelado.");
   }
 
-  const loan = getLoanOrThrow(
-    payment.loanId,
-    storage.loans,
-  );
+  const loan = getLoanOrThrow(payment.loanId, storage.loans);
 
   const timestamp = getCurrentTimestamp();
 
@@ -893,11 +828,9 @@ export function cancelLoanPayment(
   );
 
   // Las asignaciones del pago cancelado se retiran.
-  const updatedAllocations =
-    storage.loanPaymentAllocations.filter(
-      (allocation) =>
-        allocation.loanPaymentId !== payment.id,
-    );
+  const updatedAllocations = storage.loanPaymentAllocations.filter(
+    (allocation) => allocation.loanPaymentId !== payment.id,
+  );
 
   const updatedInstallments = recalculateInstallmentStatuses(
     loan.id,
@@ -905,11 +838,7 @@ export function cancelLoanPayment(
     updatedAllocations,
   );
 
-  const updatedLoan = updateLoanStatus(
-    loan,
-    updatedInstallments,
-    timestamp,
-  );
+  const updatedLoan = updateLoanStatus(loan, updatedInstallments, timestamp);
 
   const updatedAccountStorage = {
     ...storage,
@@ -928,8 +857,7 @@ export function cancelLoanPayment(
   // ---------------------------------------------------------------------------
 
   if (payment.transactionId) {
-    const previousTransactionStorage =
-      loadTransactionStorage();
+    const previousTransactionStorage = loadTransactionStorage();
 
     if (!previousTransactionStorage) {
       throw new Error(
@@ -937,10 +865,9 @@ export function cancelLoanPayment(
       );
     }
 
-    const transaction =
-      previousTransactionStorage.transactions.find(
-        (item) => item.id === payment.transactionId,
-      );
+    const transaction = previousTransactionStorage.transactions.find(
+      (item) => item.id === payment.transactionId,
+    );
 
     if (!transaction) {
       throw new Error(
@@ -962,26 +889,19 @@ export function cancelLoanPayment(
       cancellationReason: reason,
     };
 
-    const auditEvent =
-      createTransactionCancellationAuditEvent(
-        transaction,
-        reason,
-      );
+    const auditEvent = createTransactionCancellationAuditEvent(
+      transaction,
+      reason,
+    );
 
     const updatedTransactionStorage: TransactionStorage = {
       ...previousTransactionStorage,
 
-      transactions: previousTransactionStorage.transactions.map(
-        (item) =>
-          item.id === transaction.id
-            ? cancelledTransaction
-            : item,
+      transactions: previousTransactionStorage.transactions.map((item) =>
+        item.id === transaction.id ? cancelledTransaction : item,
       ),
 
-      auditEvents: [
-        auditEvent,
-        ...previousTransactionStorage.auditEvents,
-      ],
+      auditEvents: [auditEvent, ...previousTransactionStorage.auditEvents],
     };
 
     persistPaymentWithTransaction(
@@ -1005,32 +925,24 @@ export function cancelLoanPayment(
 /**
  * Obtiene los pagos de un préstamo.
  */
-export function getLoanPayments(
-  loanId: string,
-): LoanPayment[] {
+export function getLoanPayments(loanId: string): LoanPayment[] {
   const storage = loadAccountStorage();
 
   return storage.loanPayments
     .filter((payment) => payment.loanId === loanId)
     .sort(
-      (a, b) =>
-        new Date(b.paidAt).getTime() -
-        new Date(a.paidAt).getTime(),
+      (a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime(),
     );
 }
 
 /**
  * Obtiene un pago por su identificador.
  */
-export function getLoanPaymentById(
-  paymentId: string,
-): LoanPayment | null {
+export function getLoanPaymentById(paymentId: string): LoanPayment | null {
   const storage = loadAccountStorage();
 
   return (
-    storage.loanPayments.find(
-      (payment) => payment.id === paymentId,
-    ) ?? null
+    storage.loanPayments.find((payment) => payment.id === paymentId) ?? null
   );
 }
 
@@ -1050,9 +962,7 @@ export function getLoanPaymentAllocations(
 /**
  * Obtiene el saldo pendiente de un préstamo.
  */
-export function getLoanOutstandingBalance(
-  loanId: string,
-): number {
+export function getLoanOutstandingBalance(loanId: string): number {
   const storage = loadAccountStorage();
 
   const installments = storage.loanInstallments.filter(
@@ -1065,10 +975,7 @@ export function getLoanOutstandingBalance(
     loanId,
   );
 
-  return calculateLoanOutstanding(
-    installments,
-    allocations,
-  );
+  return calculateLoanOutstanding(installments, allocations);
 }
 
 /**
@@ -1089,11 +996,7 @@ export function getLoanInstallmentsWithCurrentStatus(
     (installment) => installment.loanId === loanId,
   );
 
-  return recalculateInstallmentStatuses(
-    loanId,
-    installments,
-    allocations,
-  ).sort(
+  return recalculateInstallmentStatuses(loanId, installments, allocations).sort(
     (a, b) => a.installmentNumber - b.installmentNumber,
   );
 }

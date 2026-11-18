@@ -10,6 +10,11 @@ const navigation = [
     icon: "grid",
   },
   {
+    label: "Calendario",
+    href: "/calendar",
+    icon: "calendar",
+  },
+  {
     label: "Transacciones",
     href: "/transactions",
     icon: "receipt",
@@ -28,6 +33,11 @@ const navigation = [
     label: "Préstamos",
     href: "/loans",
     icon: "loan",
+  },
+  {
+    label: "Pagos Recurrentes",
+    href: "/scheduled-payments",
+    icon: "calendar",
   },
   {
     label: "Presupuestos",
@@ -131,6 +141,13 @@ function SidebarIcon({ name }: { name: string }) {
         <circle cx="5" cy="12" r="1" />
         <circle cx="12" cy="12" r="1" />
         <circle cx="19" cy="12" r="1" />
+      </>
+    ),
+    calendar: (
+      <>
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <path d="M16 3v4M8 3v4M3 10h18" />
+        <path d="M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01" />
       </>
     ),
   };

@@ -28,6 +28,15 @@ import {
 export type TransactionType = "income" | "expense" | "transfer";
 export type TransactionStatus = "active" | "cancelled";
 
+export interface LoanPaymentBreakdown {
+  loanId: string;
+  loanPaymentId: string;
+  principalAmount: number;
+  interestAmount: number;
+  commissionAmount: number;
+  insuranceAmount: number;
+}
+
 export interface Transaction {
   id: string;
   description: string;
@@ -39,6 +48,7 @@ export interface Transaction {
   type: TransactionType;
   status?: TransactionStatus;
   cancellationReason?: string;
+  loanPaymentBreakdown?: LoanPaymentBreakdown;
 }
 
 interface TransactionListProps {
@@ -239,12 +249,27 @@ function CategoryIcon({ transaction }: { transaction: Transaction }) {
   );
 }
 
-function getAccountName(accountId: string): string {
+function getAccountName(accountReference: string): string {
   const accounts = getAccounts();
 
-  const account = accounts.find((item) => item.id === accountId);
+  const accountById = accounts.find((item) => item.id === accountReference);
 
-  return account?.name ?? "Cuenta no encontrada";
+  if (accountById) {
+    return accountById.name;
+  }
+
+  const normalizedReference = accountReference
+    .trim()
+    .toLocaleLowerCase("es-MX");
+
+  const matchingAccounts = accounts.filter(
+    (item) =>
+      item.name.trim().toLocaleLowerCase("es-MX") === normalizedReference,
+  );
+
+  return matchingAccounts.length === 1
+    ? matchingAccounts[0].name
+    : "Cuenta no encontrada";
 }
 
 function formatTransactionAccount(account: string): string {
@@ -298,6 +323,7 @@ export default function TransactionList({
         {transactions.map((transaction) => {
           const isCancelled = transaction.status === "cancelled";
           const isHighlighted = transaction.id === highlightedTransactionId;
+          const isLoanPayment = Boolean(transaction.loanPaymentBreakdown);
 
           const highlightStyle =
             isHighlighted && !isCancelled
@@ -403,66 +429,77 @@ export default function TransactionList({
                   />
                 </button>
 
-                {!isCancelled ? (
+                {!isLoanPayment ? (
                   <>
-                    <button
-                      type="button"
-                      onClick={() => onEdit(transaction)}
-                      aria-label={`Editar ${transaction.description}`}
-                      title="Editar movimiento"
-                      className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-background hover:text-foreground"
-                    >
-                      <Pencil
-                        className="h-4 w-4"
-                        strokeWidth={1.8}
-                        aria-hidden="true"
-                      />
-                    </button>
+                    {!isCancelled ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onEdit(transaction)}
+                          aria-label={`Editar ${transaction.description}`}
+                          title="Editar movimiento"
+                          className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-background hover:text-foreground"
+                        >
+                          <Pencil
+                            className="h-4 w-4"
+                            strokeWidth={1.8}
+                            aria-hidden="true"
+                          />
+                        </button>
 
-                    <button
-                      type="button"
-                      onClick={() => onCancel(transaction)}
-                      aria-label={`Cancelar ${transaction.description}`}
-                      title="Cancelar movimiento"
-                      className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-red-50 hover:text-red-600"
-                    >
-                      <X
-                        className="h-4 w-4"
-                        strokeWidth={1.8}
-                        aria-hidden="true"
-                      />
-                    </button>
+                        <button
+                          type="button"
+                          onClick={() => onCancel(transaction)}
+                          aria-label={`Cancelar ${transaction.description}`}
+                          title="Cancelar movimiento"
+                          className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-red-50 hover:text-red-600"
+                        >
+                          <X
+                            className="h-4 w-4"
+                            strokeWidth={1.8}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onRestore(transaction)}
+                          aria-label={`Revertir cancelación de ${transaction.description}`}
+                          title="Revertir cancelación"
+                          className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-emerald-50 hover:text-emerald-600"
+                        >
+                          <Undo2
+                            className="h-4 w-4"
+                            strokeWidth={1.8}
+                            aria-hidden="true"
+                          />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => onRemove(transaction)}
+                          aria-label={`Quitar ${transaction.description}`}
+                          title="Quitar movimiento cancelado"
+                          className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-red-50 hover:text-red-600"
+                        >
+                          <Trash2
+                            className="h-4 w-4"
+                            strokeWidth={1.8}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      </>
+                    )}
                   </>
                 ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => onRestore(transaction)}
-                      aria-label={`Revertir cancelación de ${transaction.description}`}
-                      title="Revertir cancelación"
-                      className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-emerald-50 hover:text-emerald-600"
-                    >
-                      <Undo2
-                        className="h-4 w-4"
-                        strokeWidth={1.8}
-                        aria-hidden="true"
-                      />
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => onRemove(transaction)}
-                      aria-label={`Quitar ${transaction.description}`}
-                      title="Quitar movimiento cancelado"
-                      className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2
-                        className="h-4 w-4"
-                        strokeWidth={1.8}
-                        aria-hidden="true"
-                      />
-                    </button>
-                  </>
+                  <span
+                    title="Este movimiento se administra desde el módulo de préstamos"
+                    className="px-2 text-[11px] font-medium text-muted"
+                  >
+                    Protegido
+                  </span>
                 )}
               </div>
             </div>

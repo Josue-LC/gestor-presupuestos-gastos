@@ -9,6 +9,7 @@ import ActiveBudgets from "@/components/dashboard/ActiveBudgets";
 import CashFlowChart from "@/components/charts/CashFlowChart";
 import RecentTransactions from "@/components/dashboard/RecentTransactions";
 import SavingsGoals from "@/components/dashboard/SavingGoals";
+import UpcomingScheduledPayments from "@/components/dashboard/UpcomingScheduledPayments";
 
 import { getActiveAccounts } from "@/services/account.service";
 
@@ -207,12 +208,16 @@ export default function DashboardPage() {
         </div>
 
         <span className="w-fit rounded-full bg-surface-card px-4 py-2 text-xs font-medium text-muted">
-          {accounts.length} {accounts.length === 1 ? "cuenta activa" : "cuentas activas"}
+          {accounts.length}{" "}
+          {accounts.length === 1 ? "cuenta activa" : "cuentas activas"}
         </span>
       </section>
 
       {/* Resumen financiero */}
       <SummaryCards />
+
+      {/* Próximos pagos recurrentes */}
+      <UpcomingScheduledPayments />
 
       {/* Flujo de efectivo y presupuestos */}
       <section className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
