@@ -66,21 +66,56 @@ function getTransferAccounts(account: string): string[] {
   return account.split(" → ").map((value) => value.trim());
 }
 
-function transactionUsesAccount(
+/**
+ * Resuelve una referencia de cuenta.
+ *
+ * Compatibilidad:
+ * - Formato actual: ID de cuenta.
+ * - Formato anterior: nombre de cuenta, siempre que sea único.
+ */
+function resolveAccountId(accountReference: string): string | null {
+  const accounts = loadAccountStorage().accounts;
+
+  const accountById = accounts.find(
+    (account) => account.id === accountReference,
+  );
+
+  if (accountById) {
+    return accountById.id;
+  }
+
+  const normalizedReference = accountReference
+    .trim()
+    .toLocaleLowerCase("es-MX");
+
+  const matchingAccounts = accounts.filter(
+    (account) =>
+      account.name.trim().toLocaleLowerCase("es-MX") === normalizedReference,
+  );
+
+  return matchingAccounts.length === 1 ? matchingAccounts[0].id : null;
+}
+
+/**
+ * Determina si un movimiento pertenece a una cuenta.
+ * También contempla movimientos antiguos que guardaban el nombre.
+ */
+export function transactionUsesAccount(
   transaction: Transaction,
   accountId: string,
 ): boolean {
   if (transaction.type === "transfer") {
-    const [sourceAccountId, destinationAccountId] =
-      getTransferAccounts(transaction.account);
+    const [sourceReference, destinationReference] = transaction.account
+      .split(" → ")
+      .map((value) => value.trim());
 
     return (
-      sourceAccountId === accountId ||
-      destinationAccountId === accountId
+      resolveAccountId(sourceReference) === accountId ||
+      resolveAccountId(destinationReference) === accountId
     );
   }
 
-  return transaction.account === accountId;
+  return resolveAccountId(transaction.account) === accountId;
 }
 
 function validateAccountData(
@@ -112,9 +147,7 @@ function validateAccountData(
   }
 
   if (data.bankId !== null) {
-    const bankExists = storage.banks.some(
-      (bank) => bank.id === data.bankId,
-    );
+    const bankExists = storage.banks.some((bank) => bank.id === data.bankId);
 
     if (!bankExists) {
       throw new Error("La institución bancaria seleccionada no existe.");
@@ -152,30 +185,20 @@ export function getAccounts(): Account[] {
 }
 
 export function getActiveAccounts(): Account[] {
-  return getAccounts().filter(
-    (account) => account.status === "active",
-  );
+  return getAccounts().filter((account) => account.status === "active");
 }
 
 export function getArchivedAccounts(): Account[] {
-  return getAccounts().filter(
-    (account) => account.status === "archived",
-  );
+  return getAccounts().filter((account) => account.status === "archived");
 }
 
-export function getAccountById(
-  accountId: string,
-): Account | undefined {
-  return getAccounts().find(
-    (account) => account.id === accountId,
-  );
+export function getAccountById(accountId: string): Account | undefined {
+  return getAccounts().find((account) => account.id === accountId);
 }
 
 // Creación
 
-export function createAccount(
-  data: CreateAccountData,
-): Account {
+export function createAccount(data: CreateAccountData): Account {
   validateAccountData(data);
 
   const storage = loadAccountStorage();
@@ -212,9 +235,7 @@ export function updateAccount(
 ): Account {
   const storage = loadAccountStorage();
 
-  const account = storage.accounts.find(
-    (item) => item.id === accountId,
-  );
+  const account = storage.accounts.find((item) => item.id === accountId);
 
   if (!account) {
     throw new Error("La cuenta no existe.");
@@ -226,12 +247,10 @@ export function updateAccount(
 
   const updatedData: CreateAccountData = {
     name: data.name ?? account.name,
-    bankId:
-      data.bankId !== undefined ? data.bankId : account.bankId,
+    bankId: data.bankId !== undefined ? data.bankId : account.bankId,
     type: data.type ?? account.type,
     currency: "MXN",
-    openingBalance:
-      data.openingBalance ?? account.openingBalance,
+    openingBalance: data.openingBalance ?? account.openingBalance,
     openingDate: data.openingDate ?? account.openingDate,
   };
 
@@ -273,17 +292,13 @@ export function updateAccount(
 
 // Movimientos relacionados
 
-export function getAccountTransactions(
-  accountId: string,
-): Transaction[] {
+export function getAccountTransactions(accountId: string): Transaction[] {
   return getActiveTransactions().filter((transaction) =>
     transactionUsesAccount(transaction, accountId),
   );
 }
 
-export function getAccountMovementCount(
-  accountId: string,
-): number {
+export function getAccountMovementCount(accountId: string): number {
   return getAccountTransactions(accountId).length;
 }
 
@@ -298,23 +313,21 @@ export function calculateAccountBalance(
     throw new Error("La fecha de consulta no es válida.");
   }
 
-  const applicableTransactions = transactions.filter(
-    (transaction) => {
-      if (!transactionUsesAccount(transaction, account.id)) {
-        return false;
-      }
+  const applicableTransactions = transactions.filter((transaction) => {
+    if (!transactionUsesAccount(transaction, account.id)) {
+      return false;
+    }
 
-      if (transaction.date < account.openingDate) {
-        return false;
-      }
+    if (transaction.date < account.openingDate) {
+      return false;
+    }
 
-      if (asOfDate && transaction.date > asOfDate) {
-        return false;
-      }
+    if (asOfDate && transaction.date > asOfDate) {
+      return false;
+    }
 
-      return true;
-    },
-  );
+    return true;
+  });
 
   return applicableTransactions.reduce((balance, transaction) => {
     const amount = Math.abs(transaction.amount);
@@ -327,8 +340,9 @@ export function calculateAccountBalance(
       return balance - amount;
     }
 
-    const [sourceAccountId, destinationAccountId] =
-      getTransferAccounts(transaction.account);
+    const [sourceAccountId, destinationAccountId] = getTransferAccounts(
+      transaction.account,
+    );
 
     if (sourceAccountId === account.id) {
       return balance - amount;
@@ -358,11 +372,7 @@ export function getAccountBalance(
 
   const transactions = getActiveTransactions();
 
-  return calculateAccountBalance(
-    account,
-    transactions,
-    asOfDate,
-  );
+  return calculateAccountBalance(account, transactions, asOfDate);
 }
 
 // Archivado y restauración
@@ -370,9 +380,7 @@ export function getAccountBalance(
 export function archiveAccount(accountId: string): Account {
   const storage = loadAccountStorage();
 
-  const account = storage.accounts.find(
-    (item) => item.id === accountId,
-  );
+  const account = storage.accounts.find((item) => item.id === accountId);
 
   if (!account) {
     throw new Error("La cuenta no existe.");
@@ -415,9 +423,7 @@ export function archiveAccount(accountId: string): Account {
 export function restoreAccount(accountId: string): Account {
   const storage = loadAccountStorage();
 
-  const account = storage.accounts.find(
-    (item) => item.id === accountId,
-  );
+  const account = storage.accounts.find((item) => item.id === accountId);
 
   if (!account) {
     throw new Error("La cuenta no existe.");

@@ -7,17 +7,9 @@ export type LoanInterestType = "fixed" | "variable";
 
 export type LoanPaymentFrequency = "weekly" | "biweekly" | "monthly";
 
-export type LoanAmortizationType =
-  | "manual"
-  | "french"
-  | "german"
-  | "custom";
+export type LoanAmortizationType = "manual" | "french" | "german" | "custom";
 
-export type LoanInstallmentStatus =
-  | "pending"
-  | "partial"
-  | "paid"
-  | "overdue";
+export type LoanInstallmentStatus = "pending" | "partial" | "paid" | "overdue";
 
 export type LoanPaymentStatus = "completed" | "cancelled";
 
@@ -52,6 +44,8 @@ export interface Loan {
   updatedAt: string;
   paidAt?: string;
   cancelledAt?: string;
+  /** Movimiento que registra el dinero recibido del préstamo. */
+  disbursementTransactionId?: string | null;
 }
 
 export interface LoanInstallment {

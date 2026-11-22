@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useMemo, useState, useEffect } from "react";
@@ -42,13 +41,17 @@ import { loadAccountStorage } from "@/services/account-storage.service";
 
 import { registerCardPaymentFromAccount } from "@/services/card-payment-registration.service";
 
+type ProtectedTransactionAction =
+  | "editar"
+  | "cancelar"
+  | "restaurar"
+  | "retirar";
+
 export default function TransactionsPage() {
   const [transactions, setTransactions] =
     useState<Transaction[]>(transactionsData);
 
-  const [auditEvents, setAuditEvents] = useState<
-    TransactionAuditEvent[]
-  >([]);
+  const [auditEvents, setAuditEvents] = useState<TransactionAuditEvent[]>([]);
 
   const [isStorageLoaded, setIsStorageLoaded] = useState(false);
 
@@ -56,8 +59,9 @@ export default function TransactionsPage() {
     { id: string; name: string }[]
   >([]);
 
-  const [destinationAccountOptions, setDestinationAccountOptions] =
-    useState<{ id: string; name: string }[]>([]);
+  const [destinationAccountOptions, setDestinationAccountOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
 
   const { toast, confirm } = useAlert();
 
@@ -93,10 +97,7 @@ export default function TransactionsPage() {
           })),
       ]);
     } catch (error) {
-      console.error(
-        "No fue posible cargar las cuentas y tarjetas:",
-        error,
-      );
+      console.error("No fue posible cargar las cuentas y tarjetas:", error);
 
       setAccountOptions([]);
       setDestinationAccountOptions([]);
@@ -149,8 +150,9 @@ export default function TransactionsPage() {
 
   const [currentPage, setCurrentPage] = useState(1);
 
-  const [highlightedTransactionId, setHighlightedTransactionId] =
-    useState<string | null>(null);
+  const [highlightedTransactionId, setHighlightedTransactionId] = useState<
+    string | null
+  >(null);
 
   const ITEMS_PER_PAGE = 20;
 
@@ -195,30 +197,23 @@ export default function TransactionsPage() {
         transaction.description.toLowerCase().includes(search) ||
         transaction.category.toLowerCase().includes(search) ||
         transaction.account.toLowerCase().includes(search) ||
-        (transaction.cancellationReason ?? "")
-          .toLowerCase()
-          .includes(search);
+        (transaction.cancellationReason ?? "").toLowerCase().includes(search);
 
       const matchesType =
-        filters.type === "all" ||
-        transaction.type === filters.type;
+        filters.type === "all" || transaction.type === filters.type;
 
       const matchesAccount =
         filters.account === "all" ||
         transaction.account.split(" → ").includes(filters.account);
 
       const matchesCategory =
-        filters.category === "all" ||
-        transaction.category === filters.category;
+        filters.category === "all" || transaction.category === filters.category;
 
       const transactionStatus =
-        transaction.status === "cancelled"
-          ? "cancelled"
-          : "active";
+        transaction.status === "cancelled" ? "cancelled" : "active";
 
       const matchesStatus =
-        filters.status === "all" ||
-        transactionStatus === filters.status;
+        filters.status === "all" || transactionStatus === filters.status;
 
       return (
         matchesSearch &&
@@ -272,24 +267,40 @@ export default function TransactionsPage() {
 
   const income = activeTransactions
     .filter((transaction) => transaction.type === "income")
-    .reduce(
-      (total, transaction) => total + Math.abs(transaction.amount),
-      0,
-    );
+    .reduce((total, transaction) => total + Math.abs(transaction.amount), 0);
 
+  /**
+   * Calcula el gasto contable real.
+   *
+   * En pagos de préstamos no se considera la amortización de capital
+   * como gasto, únicamente intereses, comisiones y seguros.
+   */
   const expenses = activeTransactions
     .filter((transaction) => transaction.type === "expense")
-    .reduce(
-      (total, transaction) => total + Math.abs(transaction.amount),
-      0,
-    );
+    .reduce((total, transaction) => {
+      const breakdown = transaction.loanPaymentBreakdown;
+
+      if (breakdown) {
+        const financialExpenses =
+          Math.abs(breakdown.interestAmount) +
+          Math.abs(breakdown.commissionAmount) +
+          Math.abs(breakdown.insuranceAmount);
+
+        return total + financialExpenses;
+      }
+
+      return total + Math.abs(transaction.amount);
+    }, 0);
 
   const netBalance = income - expenses;
 
   // ---------------------------------------------------------------------------
-  // PROTECCIÓN DE TRANSFERENCIAS VINCULADAS A PAGOS FINANCIEROS
+  // PROTECCIÓN DE TRANSACCIONES VINCULADAS A PAGOS FINANCIEROS
   // ---------------------------------------------------------------------------
 
+  /**
+   * Identifica movimientos que pertenecen a pagos de tarjetas de crédito.
+   */
   function isLinkedToCardPayment(transactionId: string): boolean {
     const storage = loadAccountStorage();
 
@@ -298,7 +309,19 @@ export default function TransactionsPage() {
     );
   }
 
+  /**
+   * Identifica movimientos que pertenecen a pagos de préstamos.
+   *
+   * Primero verifica la información del propio movimiento y después
+   * comprueba el registro del pago en el almacenamiento financiero.
+   */
   function isLinkedToLoanPayment(transactionId: string): boolean {
+    const transaction = transactions.find((item) => item.id === transactionId);
+
+    if (transaction?.loanPaymentBreakdown) {
+      return true;
+    }
+
     const storage = loadAccountStorage();
 
     return (storage?.loanPayments ?? []).some(
@@ -306,11 +329,38 @@ export default function TransactionsPage() {
     );
   }
 
+  /**
+   * Identifica cualquier movimiento administrado por otro módulo financiero.
+   */
   function isLinkedToManagedPayment(transactionId: string): boolean {
     return (
       isLinkedToCardPayment(transactionId) ||
       isLinkedToLoanPayment(transactionId)
     );
+  }
+
+  /**
+   * Muestra un mensaje específico según el tipo de pago vinculado.
+   */
+  function notifyProtectedTransaction(
+    transactionId: string,
+    action: ProtectedTransactionAction,
+  ): void {
+    if (isLinkedToLoanPayment(transactionId)) {
+      toast.error(
+        "Este movimiento está vinculado a un pago de préstamo. Adminístralo desde el módulo de préstamos.",
+        "Pago de préstamo protegido",
+      );
+
+      return;
+    }
+
+    if (isLinkedToCardPayment(transactionId)) {
+      toast.error(
+        `Esta transferencia está vinculada a un pago de tarjeta. No se puede ${action} desde aquí.`,
+        "Movimiento protegido",
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -332,9 +382,7 @@ export default function TransactionsPage() {
     const storedData = loadTransactionStorage();
 
     if (!storedData) {
-      throw new Error(
-        "No fue posible recuperar los movimientos guardados.",
-      );
+      throw new Error("No fue posible recuperar los movimientos guardados.");
     }
 
     setTransactions(storedData.transactions);
@@ -360,8 +408,9 @@ export default function TransactionsPage() {
           );
         }
 
-        const [sourceAccountId, destinationAccountId] =
-          data.account.split("→").map((part) => part.trim());
+        const [sourceAccountId, destinationAccountId] = data.account
+          .split("→")
+          .map((part) => part.trim());
 
         if (!sourceAccountId || !destinationAccountId) {
           throw new Error(
@@ -369,9 +418,7 @@ export default function TransactionsPage() {
           );
         }
 
-        if (
-          destinationAccountId !== `card:${data.cardPayment.cardId}`
-        ) {
+        if (destinationAccountId !== `card:${data.cardPayment.cardId}`) {
           throw new Error(
             "La tarjeta seleccionada no coincide con el destino de la transferencia.",
           );
@@ -421,28 +468,18 @@ export default function TransactionsPage() {
         date: data.date,
       };
 
-      const auditEvent =
-        createTransactionAuditEvent(newTransaction);
+      const auditEvent = createTransactionAuditEvent(newTransaction);
 
-      setTransactions((current) => [
-        newTransaction,
-        ...current,
-      ]);
+      setTransactions((current) => [newTransaction, ...current]);
 
-      setAuditEvents((current) => [
-        auditEvent,
-        ...current,
-      ]);
+      setAuditEvents((current) => [auditEvent, ...current]);
 
       setCurrentPage(1);
       setHighlightedTransactionId(newTransaction.id);
 
       closeForm();
     } catch (error) {
-      console.error(
-        "Error al registrar la transacción:",
-        error,
-      );
+      console.error("Error al registrar la transacción:", error);
 
       toast.error(
         error instanceof Error
@@ -461,11 +498,7 @@ export default function TransactionsPage() {
     if (!editingTransaction) return;
 
     if (isLinkedToManagedPayment(editingTransaction.id)) {
-      toast.error(
-        "Esta transferencia está vinculada a un pago financiero. No se puede modificar.",
-        "Movimiento protegido",
-      );
-
+      notifyProtectedTransaction(editingTransaction.id, "editar");
       closeForm();
       return;
     }
@@ -492,10 +525,7 @@ export default function TransactionsPage() {
     );
 
     if (auditEvent) {
-      setAuditEvents((current) => [
-        auditEvent,
-        ...current,
-      ]);
+      setAuditEvents((current) => [auditEvent, ...current]);
     }
 
     closeForm();
@@ -514,10 +544,7 @@ export default function TransactionsPage() {
     if (transaction.status === "cancelled") return;
 
     if (isLinkedToManagedPayment(transaction.id)) {
-      toast.error(
-        "Esta transferencia está vinculada a un pago financiero y no se puede editar.",
-        "Movimiento protegido",
-      );
+      notifyProtectedTransaction(transaction.id, "editar");
       return;
     }
 
@@ -538,10 +565,7 @@ export default function TransactionsPage() {
     if (transaction.status === "cancelled") return;
 
     if (isLinkedToManagedPayment(transaction.id)) {
-      toast.error(
-        "Esta transferencia está vinculada a un pago financiero. No se puede cancelar.",
-        "Movimiento protegido",
-      );
+      notifyProtectedTransaction(transaction.id, "cancelar");
       return;
     }
 
@@ -554,10 +578,7 @@ export default function TransactionsPage() {
     if (!transactionToCancel) return;
 
     if (isLinkedToManagedPayment(transactionToCancel.id)) {
-      toast.error(
-        "Esta transferencia está vinculada a un pago financiero. No se puede cancelar.",
-        "Movimiento protegido",
-      );
+      notifyProtectedTransaction(transactionToCancel.id, "cancelar");
 
       setTransactionToCancel(null);
       return;
@@ -566,9 +587,7 @@ export default function TransactionsPage() {
     const reason = cancellationReason.trim();
 
     if (!reason) {
-      setCancellationError(
-        "Debes indicar el motivo de la cancelación.",
-      );
+      setCancellationError("Debes indicar el motivo de la cancelación.");
       return;
     }
 
@@ -594,15 +613,10 @@ export default function TransactionsPage() {
       ),
     );
 
-    setAuditEvents((current) => [
-      auditEvent,
-      ...current,
-    ]);
+    setAuditEvents((current) => [auditEvent, ...current]);
 
     setSelectedTransaction((current) =>
-      current?.id === transactionToCancel.id
-        ? cancelledTransaction
-        : current,
+      current?.id === transactionToCancel.id ? cancelledTransaction : current,
     );
 
     setTransactionToCancel(null);
@@ -623,10 +637,7 @@ export default function TransactionsPage() {
     if (transaction.status !== "cancelled") return;
 
     if (isLinkedToManagedPayment(transaction.id)) {
-      toast.error(
-        "Esta transferencia está vinculada a un pago financiero y no puede modificarse desde aquí.",
-        "Movimiento protegido",
-      );
+      notifyProtectedTransaction(transaction.id, "restaurar");
       return;
     }
 
@@ -636,27 +647,20 @@ export default function TransactionsPage() {
       cancellationReason: undefined,
     };
 
-    const auditEvent =
-      createTransactionRestoreAuditEvent(transaction);
+    const auditEvent = createTransactionRestoreAuditEvent(transaction);
 
     setTransactions((current) =>
       current.map((item) =>
-        item.id === transaction.id &&
-        item.status === "cancelled"
+        item.id === transaction.id && item.status === "cancelled"
           ? restoredTransaction
           : item,
       ),
     );
 
-    setAuditEvents((current) => [
-      auditEvent,
-      ...current,
-    ]);
+    setAuditEvents((current) => [auditEvent, ...current]);
 
     setSelectedTransaction((current) =>
-      current?.id === transaction.id
-        ? restoredTransaction
-        : current,
+      current?.id === transaction.id ? restoredTransaction : current,
     );
 
     toast.success(
@@ -673,10 +677,7 @@ export default function TransactionsPage() {
     if (transaction.status !== "cancelled") return;
 
     if (isLinkedToManagedPayment(transaction.id)) {
-      toast.error(
-        "Esta transferencia está vinculada a un pago financiero. No se puede retirar.",
-        "Movimiento protegido",
-      );
+      notifyProtectedTransaction(transaction.id, "retirar");
       return;
     }
 
@@ -688,25 +689,19 @@ export default function TransactionsPage() {
       type: "warning",
 
       onConfirm: () => {
+        // Segunda validación por seguridad antes de retirar el movimiento.
         if (isLinkedToManagedPayment(transaction.id)) {
-          toast.error(
-            "Esta transferencia está vinculada a un pago financiero. No se puede retirar.",
-            "Movimiento protegido",
-          );
+          notifyProtectedTransaction(transaction.id, "retirar");
           return;
         }
 
-        const auditEvent =
-          createTransactionRemovalAuditEvent(transaction);
+        const auditEvent = createTransactionRemovalAuditEvent(transaction);
 
         setTransactions((current) =>
           current.filter((item) => item.id !== transaction.id),
         );
 
-        setAuditEvents((current) => [
-          auditEvent,
-          ...current,
-        ]);
+        setAuditEvents((current) => [auditEvent, ...current]);
 
         setSelectedTransaction((current) =>
           current?.id === transaction.id ? null : current,
@@ -816,9 +811,7 @@ export default function TransactionsPage() {
                   <button
                     type="button"
                     onClick={() =>
-                      setCurrentPage((page) =>
-                        Math.max(1, page - 1),
-                      )
+                      setCurrentPage((page) => Math.max(1, page - 1))
                     }
                     disabled={currentPage === 1}
                     className="rounded-full border border-hairline px-4 py-2 text-xs font-semibold text-foreground transition hover:bg-background disabled:cursor-not-allowed disabled:opacity-40"
@@ -833,9 +826,7 @@ export default function TransactionsPage() {
                   <button
                     type="button"
                     onClick={() =>
-                      setCurrentPage((page) =>
-                        Math.min(totalPages, page + 1),
-                      )
+                      setCurrentPage((page) => Math.min(totalPages, page + 1))
                     }
                     disabled={currentPage === totalPages}
                     className="rounded-full border border-hairline px-4 py-2 text-xs font-semibold text-foreground transition hover:bg-background disabled:cursor-not-allowed disabled:opacity-40"
@@ -849,16 +840,14 @@ export default function TransactionsPage() {
 
           {/* GRÁFICA DE GASTOS POR CATEGORÍA */}
           <div className="min-w-0 xl:sticky xl:top-36">
-            <CategoryExpenseChart
-              transactions={filteredTransactions}
-            />
+            <CategoryExpenseChart transactions={filteredTransactions} />
           </div>
         </div>
       </section>
 
       <p className="text-center text-xs text-muted">
-        Datos ilustrativos · Los movimientos y su historial de auditoría
-        se conservan en el almacenamiento local de este navegador.
+        Datos ilustrativos · Los movimientos y su historial de auditoría se
+        conservan en el almacenamiento local de este navegador.
       </p>
 
       <button
@@ -884,9 +873,7 @@ export default function TransactionsPage() {
             cancelText: "Volver",
             type: "warning",
             onConfirm: () => {
-              toast.success(
-                "Confirmación ejecutada correctamente.",
-              );
+              toast.success("Confirmación ejecutada correctamente.");
             },
           })
         }
@@ -903,9 +890,7 @@ export default function TransactionsPage() {
           destinationAccounts={destinationAccountOptions}
           transaction={editingTransaction}
           onSubmit={
-            editingTransaction
-              ? handleEditTransaction
-              : handleCreateTransaction
+            editingTransaction ? handleEditTransaction : handleCreateTransaction
           }
           onCancel={closeForm}
         />
@@ -955,10 +940,9 @@ export default function TransactionsPage() {
             </h2>
 
             <p className="mt-2 text-sm leading-6 text-muted">
-              Vas a cancelar{" "}
-              <strong>{transactionToCancel.description}</strong>.
-              El movimiento permanecerá en el historial, pero dejará
-              de considerarse en los indicadores financieros.
+              Vas a cancelar <strong>{transactionToCancel.description}</strong>.
+              El movimiento permanecerá en el historial, pero dejará de
+              considerarse en los indicadores financieros.
             </p>
 
             <label
