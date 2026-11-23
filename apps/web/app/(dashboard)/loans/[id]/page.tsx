@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
@@ -11,9 +12,14 @@ import {
   getLoanOutstandingBalance,
   getLoanInstallmentsWithCurrentStatus,
   getLoanPayments,
+  registerLoanPayment,
+  type RegisterLoanPaymentInput,
 } from "@/services/loan-payment.service";
 import { getBanks } from "@/services/bank.service";
 import { getActiveAccounts } from "@/services/account.service";
+
+import LoanPaymentForm from "@/components/loans/LoanPaymentForm";
+import { useAlert } from "@/context/AlertContext";
 
 const currencyFormatter = new Intl.NumberFormat("es-MX", {
   style: "currency",
@@ -95,10 +101,14 @@ function MetricCard({
   return (
     <div className="rounded-2xl border border-border bg-card p-5">
       <p className="text-sm text-muted">{label}</p>
+
       <p className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
         {value}
       </p>
-      {description && <p className="mt-1 text-xs text-muted">{description}</p>}
+
+      {description && (
+        <p className="mt-1 text-xs text-muted">{description}</p>
+      )}
     </div>
   );
 }
@@ -113,7 +123,10 @@ function SectionTitle({
   return (
     <div className="mb-4">
       <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-      {description && <p className="mt-1 text-sm text-muted">{description}</p>}
+
+      {description && (
+        <p className="mt-1 text-sm text-muted">{description}</p>
+      )}
     </div>
   );
 }
@@ -122,6 +135,8 @@ export default function LoanDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const loanId = params.id;
+
+  const { toast } = useAlert();
 
   const [loan, setLoan] = useState<Loan | null>(null);
   const [installments, setInstallments] = useState<LoanInstallment[]>([]);
@@ -132,6 +147,8 @@ export default function LoanDetailPage() {
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [isPaymentFormOpen, setIsPaymentFormOpen] = useState(false);
 
   const loadData = useCallback(() => {
     try {
@@ -147,7 +164,6 @@ export default function LoanDetailPage() {
       }
 
       const scheduleData = getLoanInstallmentsWithCurrentStatus(loanId);
-
       const paymentData = getLoanPayments(loanId);
       const bankData = getBanks();
       const accountData = getActiveAccounts();
@@ -161,6 +177,7 @@ export default function LoanDetailPage() {
       setOutstandingBalance(balance);
     } catch (err) {
       console.error("Error al cargar el detalle del préstamo:", err);
+
       setError("Ocurrió un error al cargar la información del préstamo.");
     } finally {
       setIsLoading(false);
@@ -170,6 +187,26 @@ export default function LoanDetailPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Registrar un pago del préstamo.
+  const handleRegisterPayment = (data: RegisterLoanPaymentInput) => {
+    try {
+      registerLoanPayment(data);
+
+      setIsPaymentFormOpen(false);
+
+      toast.success(
+        "El pago se registró correctamente y se actualizó el préstamo.",
+        "Pago registrado",
+      );
+
+      loadData();
+    } catch (err) {
+      console.error("Error al registrar el pago:", err);
+
+      throw err;
+    }
+  };
 
   if (isLoading) {
     return (
@@ -250,17 +287,16 @@ export default function LoanDetailPage() {
       item.status === "overdue",
   );
 
+  // El total pagado considera todos los pagos completados,
+  // incluyendo pagos parciales.
   const completedPayments = payments.filter(
     (payment) => payment.status === "completed",
   );
 
-  const totalPaid = installments.reduce((total, installment) => {
-    if (installment.status === "paid") {
-      return total + installment.totalAmount;
-    }
-
-    return total;
-  }, 0);
+  const totalPaid = completedPayments.reduce(
+    (total, payment) => total + payment.amount,
+    0,
+  );
 
   const progress =
     loan.contractedAmount > 0
@@ -293,6 +329,7 @@ export default function LoanDetailPage() {
           >
             <path d="m15 18-6-6 6-6" />
           </svg>
+
           Volver a préstamos
         </button>
 
@@ -302,6 +339,7 @@ export default function LoanDetailPage() {
               <h1 className="text-2xl font-bold tracking-tight text-foreground">
                 {loan.name}
               </h1>
+
               <StatusBadge status={loan.status} />
             </div>
 
@@ -316,6 +354,27 @@ export default function LoanDetailPage() {
               </p>
             )}
           </div>
+
+          {/* Registrar pago */}
+          {loan.status === "active" && outstandingBalance > 0 && (
+            <button
+              type="button"
+              onClick={() => setIsPaymentFormOpen(true)}
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                className="h-4 w-4"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M12 5v14m-7-7h14" />
+              </svg>
+
+              Registrar pago
+            </button>
+          )}
         </div>
       </div>
 
@@ -336,7 +395,7 @@ export default function LoanDetailPage() {
         <MetricCard
           label="Total pagado"
           value={formatCurrency(totalPaid)}
-          description="Capital, intereses y conceptos de parcialidades liquidadas"
+          description="Importe acumulado de pagos completados"
         />
 
         <MetricCard
@@ -355,6 +414,7 @@ export default function LoanDetailPage() {
             <h2 className="font-semibold text-foreground">
               Progreso de liquidación
             </h2>
+
             <p className="mt-1 text-sm text-muted">
               Avance calculado con base en el saldo pendiente.
             </p>
@@ -415,6 +475,7 @@ export default function LoanDetailPage() {
               <p className="text-2xl font-bold text-foreground">
                 {formatCurrency(nextInstallment.totalAmount)}
               </p>
+
               <div className="mt-2">
                 <StatusBadge status={nextInstallment.status} />
               </div>
@@ -502,6 +563,7 @@ export default function LoanDetailPage() {
         {loan.notes && (
           <div className="mt-4 rounded-2xl border border-border bg-card p-5">
             <h3 className="text-sm font-semibold text-foreground">Notas</h3>
+
             <p className="mt-2 whitespace-pre-wrap text-sm text-muted">
               {loan.notes}
             </p>
@@ -596,6 +658,7 @@ export default function LoanDetailPage() {
               <p className="font-medium text-foreground">
                 Todavía no hay pagos registrados
               </p>
+
               <p className="mt-1 text-sm text-muted">
                 Aquí aparecerán los pagos que realices a este préstamo.
               </p>
@@ -654,6 +717,17 @@ export default function LoanDetailPage() {
           )}
         </div>
       </section>
+
+      {/* Register payment modal */}
+      {isPaymentFormOpen && (
+        <LoanPaymentForm
+          loan={loan}
+          accounts={accounts}
+          outstandingBalance={outstandingBalance}
+          onSubmit={handleRegisterPayment}
+          onCancel={() => setIsPaymentFormOpen(false)}
+        />
+      )}
     </div>
   );
 }

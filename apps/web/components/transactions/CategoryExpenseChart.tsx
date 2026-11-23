@@ -32,6 +32,7 @@ const categoryColors: Record<string, string> = {
   Entretenimiento: "#A855F7",
   Compras: "#F97316",
   Educación: "#06B6D4",
+  "Pago de préstamo": "#6366F1",
   Otros: "#94A3B8",
 };
 
@@ -43,10 +44,31 @@ const fallbackColors = [
   "#2563EB",
 ];
 
+/**
+ * Obtiene el importe que debe contabilizarse como gasto.
+ *
+ * Para pagos de préstamos excluye la amortización de capital.
+ * Para cualquier otro gasto utiliza el importe completo.
+ */
+function getExpenseAmount(transaction: Transaction): number {
+  const breakdown = transaction.loanPaymentBreakdown;
+
+  if (breakdown) {
+    return (
+      Math.abs(breakdown.interestAmount) +
+      Math.abs(breakdown.commissionAmount) +
+      Math.abs(breakdown.insuranceAmount)
+    );
+  }
+
+  return Math.abs(transaction.amount);
+}
+
 function formatCurrency(amount: number) {
   return amount.toLocaleString("es-MX", {
     style: "currency",
     currency: "MXN",
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
 }
@@ -64,9 +86,13 @@ export default function CategoryExpenseChart({
     const totals = expenses.reduce<Record<string, number>>(
       (accumulator, transaction) => {
         const category = transaction.category.trim() || "Otros";
+        const amount = getExpenseAmount(transaction);
+
+        // No mostramos categorías que no representen un gasto real.
+        if (amount <= 0) return accumulator;
 
         accumulator[category] =
-          (accumulator[category] ?? 0) + Math.abs(transaction.amount);
+          (accumulator[category] ?? 0) + amount;
 
         return accumulator;
       },
@@ -83,7 +109,7 @@ export default function CategoryExpenseChart({
     }
 
     return Object.entries(totals)
-      .map(([category, amount], index) => ({
+      .map(([category, amount], index): CategoryExpense => ({
         category,
         amount,
         percentage: (amount / totalExpenses) * 100,
@@ -105,6 +131,7 @@ export default function CategoryExpenseChart({
         <h2 className="text-base font-semibold text-foreground">
           Gastos por categoría
         </h2>
+
         <p className="mt-1 text-xs text-muted">
           Distribución de tus gastos registrados
         </p>
@@ -115,6 +142,7 @@ export default function CategoryExpenseChart({
           <p className="text-sm font-semibold text-foreground">
             Sin gastos registrados
           </p>
+
           <p className="mt-1 max-w-[220px] text-xs leading-5 text-muted">
             Cuando registres gastos activos, aparecerá aquí su distribución
             por categoría.
@@ -161,6 +189,7 @@ export default function CategoryExpenseChart({
 
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
               <span className="text-xs text-muted">Total gastado</span>
+
               <span className="mt-1 text-xl font-bold tracking-tight text-foreground">
                 {formatCurrency(totalExpenses)}
               </span>
@@ -178,6 +207,7 @@ export default function CategoryExpenseChart({
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ backgroundColor: category.color }}
                   />
+
                   <span className="truncate text-xs font-medium text-body">
                     {category.category}
                   </span>
@@ -187,6 +217,7 @@ export default function CategoryExpenseChart({
                   <span className="text-xs font-semibold tabular-nums text-foreground">
                     {formatCurrency(category.amount)}
                   </span>
+
                   <span className="w-11 text-right text-xs tabular-nums text-muted">
                     {category.percentage.toFixed(1)}%
                   </span>

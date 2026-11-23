@@ -62,14 +62,14 @@ export default function TransactionSummary({
       <SummaryItem
         label="Gastos"
         amount={expenses}
-        description="Total de gastos del periodo"
+        description="Incluye intereses, comisiones y seguros de préstamos"
         color="peach"
       />
 
       <SummaryItem
         label="Balance neto"
         amount={netBalance}
-        description="Ingresos menos gastos"
+        description="Ingresos menos gastos financieros y otros gastos"
         color="lavender"
       />
     </section>
