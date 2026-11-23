@@ -1,0 +1,162 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AccountType {
+  checking
+  savings
+  cash
+  investment
+  other
+}
+
+enum AccountStatus {
+  active
+  archived
+}
+
+enum TransactionType {
+  income
+  expense
+  transfer
+}
+
+enum TransactionStatus {
+  active
+  cancelled
+}
+
+enum AuditAction {
+  created
+  updated
+  cancelled
+  restored
+  removed
+}
+
+model User {
+  id                    String             @id @default(uuid()) @db.Uuid
+  email                 String             @unique @db.VarChar(320)
+  passwordHash          String             @map("password_hash") @db.VarChar(255)
+  createdAt             DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sessions              Session[]
+  institutions          Institution[]
+  accounts              Account[]
+  transactions          Transaction[]
+  auditEvents           TransactionAudit[] @relation("AuditOwner")
+  performedAuditEvents  TransactionAudit[] @relation("AuditActor")
+
+  @@map("users")
+}
+
+// Solo se almacena el hash del token. La cookie contiene el token original.
+model Session {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.VarChar(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+// También registra intentos para correos inexistentes, sin almacenar el correo.
+model LoginAttempt {
+  identifierHash String    @id @map("identifier_hash") @db.Char(64)
+  failedCount    Int       @default(0) @map("failed_count")
+  firstFailedAt  DateTime  @default(now()) @map("first_failed_at") @db.Timestamptz(3)
+  lockedUntil    DateTime? @map("locked_until") @db.Timestamptz(3)
+
+  @@map("login_attempts")
+}
+
+model Institution {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  name      String    @db.VarChar(120)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accounts  Account[]
+
+  @@unique([id, userId])
+  @@unique([userId, name])
+  @@map("institutions")
+}
+
+model Account {
+  id                      String        @id @default(uuid()) @db.Uuid
+  userId                  String        @map("user_id") @db.Uuid
+  institutionId           String?       @map("institution_id") @db.Uuid
+  name                    String        @db.VarChar(120)
+  type                    AccountType
+  currency                String        @default("MXN") @db.Char(3)
+  openingBalance          Decimal       @map("opening_balance") @db.Decimal(18, 2)
+  openingDate             DateTime      @map("opening_date") @db.Date
+  status                  AccountStatus @default(active)
+  createdAt               DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  archivedAt              DateTime?     @map("archived_at") @db.Timestamptz(3)
+  user                    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution             Institution?  @relation(fields: [institutionId, userId], references: [id, userId])
+  outgoingTransactions    Transaction[] @relation("SourceAccount")
+  incomingTransactions    Transaction[] @relation("DestinationAccount")
+
+  @@unique([id, userId])
+  @@index([userId, status])
+  @@index([userId, institutionId])
+  @@map("accounts")
+}
+
+// amount siempre es positivo. income usa destinationAccount; expense usa
+// sourceAccount; transfer usa ambos. Estas reglas tendrán CHECK en la migración.
+model Transaction {
+  id                   String            @id @default(uuid()) @db.Uuid
+  userId               String            @map("user_id") @db.Uuid
+  type                 TransactionType
+  description          String            @db.VarChar(255)
+  category             String?           @db.VarChar(120)
+  amount               Decimal           @db.Decimal(18, 2)
+  sourceAccountId      String?           @map("source_account_id") @db.Uuid
+  destinationAccountId String?           @map("destination_account_id") @db.Uuid
+  operationDate        DateTime          @map("operation_date") @db.Date
+  status               TransactionStatus @default(active)
+  cancellationReason   String?           @map("cancellation_reason") @db.Text
+  registeredAt         DateTime          @default(now()) @map("registered_at") @db.Timestamptz(3)
+  updatedAt            DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceAccount        Account?          @relation("SourceAccount", fields: [sourceAccountId, userId], references: [id, userId])
+  destinationAccount   Account?          @relation("DestinationAccount", fields: [destinationAccountId, userId], references: [id, userId])
+  auditEvents          TransactionAudit[]
+
+  @@unique([id, userId])
+  @@index([userId, operationDate, status])
+  @@index([userId, sourceAccountId])
+  @@index([userId, destinationAccountId])
+  @@map("transactions")
+}
+
+model TransactionAudit {
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String      @map("user_id") @db.Uuid
+  transactionId String      @map("transaction_id") @db.Uuid
+  actorUserId   String      @map("actor_user_id") @db.Uuid
+  action        AuditAction
+  reason        String?     @db.Text
+  changes       Json
+  occurredAt    DateTime    @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  user          User        @relation("AuditOwner", fields: [userId], references: [id], onDelete: Cascade)
+  actor         User        @relation("AuditActor", fields: [actorUserId], references: [id])
+  transaction   Transaction @relation(fields: [transactionId, userId], references: [id, userId])
+
+  @@index([userId, transactionId, occurredAt])
+  @@map("transaction_audit")
+}

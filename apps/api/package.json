@@ -1,0 +1,40 @@
+{
+  "name": "gestor-presupuestos-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "typecheck": "tsc --noEmit",
+    "openapi:validate": "node scripts/validate-openapi.mjs",
+    "db:validate": "prisma validate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:local:env": "node scripts/init-local-env.mjs",
+    "db:local:up": "docker compose --env-file .db.env up -d db"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.0.0",
+    "@prisma/client": "^7.0.0",
+    "@node-rs/argon2": "^2.2.0",
+    "next": "16.4.6",
+    "pg": "^8.0.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@apidevtools/swagger-parser": "^10.0.0",
+    "@types/node": "^20",
+    "@types/pg": "^8.0.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "^17.0.0",
+    "prisma": "^7.0.0",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@11.25.0"
+}

@@ -1,0 +1,679 @@
+openapi: 3.1.0
+info:
+  title: Gestor de presupuestos y gastos API
+  version: 0.1.0
+  description: >-
+    Contrato inicial del backend. Salvo registro e inicio de sesión, cada
+    operación usa el usuario de la sesión; ningún cuerpo acepta userId.
+servers:
+  - url: http://localhost:3001
+    description: Desarrollo local
+tags:
+  - name: Auth
+  - name: Institutions
+  - name: Accounts
+  - name: Transactions
+  - name: System
+security:
+  - sessionCookie: []
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Comprueba que el proceso responde
+      security: []
+      responses:
+        '200':
+          description: API disponible
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Registra un usuario
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
+      responses:
+        '201':
+          description: Usuario creado y sesión iniciada
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Inicia sesión
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
+      responses:
+        '200':
+          description: Sesión iniciada
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookie'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '429': { $ref: '#/components/responses/TooManyAttempts' }
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoca la sesión actual
+      responses:
+        '204':
+          description: Sesión revocada y cookie eliminada
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Consulta el usuario autenticado
+      responses:
+        '200':
+          description: Usuario autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /api/v1/institutions:
+    get:
+      tags: [Institutions]
+      summary: Lista las instituciones del usuario
+      responses:
+        '200':
+          description: Instituciones
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Institution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Institutions]
+      summary: Crea una institución del usuario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        '201':
+          description: Institución creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Institution' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/accounts:
+    get:
+      tags: [Accounts]
+      summary: Lista las cuentas del usuario
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/AccountStatus' }
+      responses:
+        '200':
+          description: Cuentas
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Accounts]
+      summary: Crea una cuenta
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountInput' }
+      responses:
+        '201':
+          description: Cuenta creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/accounts/{accountId}:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      tags: [Accounts]
+      summary: Consulta una cuenta propia
+      responses:
+        '200':
+          description: Cuenta
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Accounts]
+      summary: Actualiza los datos de una cuenta propia
+      description: Una cuenta archivada no se modifica. Si tiene movimientos activos, su saldo inicial y fecha de apertura no se pueden cambiar.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccountPatch' }
+      responses:
+        '200':
+          description: Cuenta actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/accounts/{accountId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [Accounts]
+      summary: Archiva una cuenta propia
+      responses:
+        '200':
+          description: Cuenta archivada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/accounts/{accountId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [Accounts]
+      summary: Restaura una cuenta archivada
+      responses:
+        '200':
+          description: Cuenta activa
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/accounts/{accountId}/balance:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    get:
+      tags: [Accounts]
+      summary: Calcula el saldo a una fecha
+      description: Si se omite asOfDate, usa la fecha actual en UTC. No admite fechas anteriores a la apertura de la cuenta.
+      parameters:
+        - name: asOfDate
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Saldo calculado con movimientos activos
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accountId, asOfDate, currency, balance]
+                properties:
+                  accountId: { $ref: '#/components/schemas/Id' }
+                  asOfDate: { type: string, format: date }
+                  currency: { type: string, const: MXN }
+                  balance: { $ref: '#/components/schemas/Money' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/transactions:
+    get:
+      tags: [Transactions]
+      summary: Lista movimientos propios con filtros y paginación
+      description: El cursor continúa el orden por fecha de operación e ID descendentes.
+      parameters:
+        - name: accountId
+          in: query
+          schema: { $ref: '#/components/schemas/Id' }
+        - name: type
+          in: query
+          schema: { $ref: '#/components/schemas/TransactionType' }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/TransactionStatus' }
+        - name: from
+          in: query
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          schema: { type: string, format: date }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: Página de movimientos
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Transaction' }
+                  nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Transactions]
+      summary: Registra ingreso, gasto o transferencia
+      description: >-
+        Valida la titularidad de ambas cuentas y guarda movimiento y auditoría
+        dentro de una única transacción de PostgreSQL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionInput' }
+      responses:
+        '201':
+          description: Movimiento creado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/transactions/{transactionId}:
+    parameters:
+      - $ref: '#/components/parameters/TransactionId'
+    get:
+      tags: [Transactions]
+      summary: Consulta un movimiento propio
+      responses:
+        '200':
+          description: Movimiento
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Transactions]
+      summary: Actualiza un movimiento activo no vinculado a pagos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TransactionPatch' }
+      responses:
+        '200':
+          description: Movimiento actualizado con evento de auditoría
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/transactions/{transactionId}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/TransactionId'
+    post:
+      tags: [Transactions]
+      summary: Cancela un movimiento y conserva su historial
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200':
+          description: Movimiento cancelado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/transactions/{transactionId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/TransactionId'
+    post:
+      tags: [Transactions]
+      summary: Restaura un movimiento cancelado
+      responses:
+        '200':
+          description: Movimiento activo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Transaction' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenOrigin' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api/v1/transactions/{transactionId}/audit:
+    parameters:
+      - $ref: '#/components/parameters/TransactionId'
+    get:
+      tags: [Transactions]
+      summary: Consulta la auditoría de un movimiento propio
+      responses:
+        '200':
+          description: Eventos en orden cronológico
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AuditEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Token opaco de 32 bytes en cookie HttpOnly, Secure en producción y SameSite=Lax. Caduca a los siete días.
+  headers:
+    SessionCookie:
+      description: Cookie de sesión HttpOnly con vencimiento.
+      schema: { type: string }
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+  responses:
+    BadRequest:
+      description: Solicitud inválida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Falta una sesión válida
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ForbiddenOrigin:
+      description: Origen de navegador no autorizado
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooManyAttempts:
+      description: Tres contraseñas incorrectas en quince minutos; bloqueo durante quince minutos.
+      headers:
+        Retry-After:
+          description: Segundos restantes antes de volver a intentar.
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Recurso inexistente o perteneciente a otro usuario
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: La operación contradice el estado actual
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Id:
+      type: string
+      format: uuid
+    Money:
+      type: string
+      pattern: '^-?(?:0|[1-9]\d{0,15})\.\d{2}$'
+      description: Decimal exacto de dos posiciones; nunca número de punto flotante.
+      examples: ['1250.50']
+    PositiveMoney:
+      type: string
+      pattern: '^(?!0\.00$)(?:0|[1-9]\d{0,15})\.\d{2}$'
+      examples: ['1250.50']
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 320 }
+        password: { type: string, minLength: 12, maxLength: 128 }
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, email, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        email: { type: string, format: email }
+        createdAt: { type: string, format: date-time }
+    Institution:
+      type: object
+      additionalProperties: false
+      required: [id, name, createdAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        name: { type: string }
+        createdAt: { type: string, format: date-time }
+    AccountType:
+      type: string
+      enum: [checking, savings, cash, investment, other]
+    AccountStatus:
+      type: string
+      enum: [active, archived]
+    AccountInput:
+      type: object
+      additionalProperties: false
+      required: [name, type, openingBalance, openingDate]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        institutionId:
+          oneOf:
+            - { $ref: '#/components/schemas/Id' }
+            - { type: 'null' }
+        type: { $ref: '#/components/schemas/AccountType' }
+        openingBalance: { $ref: '#/components/schemas/Money' }
+        openingDate: { type: string, format: date }
+    AccountPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        institutionId:
+          oneOf:
+            - { $ref: '#/components/schemas/Id' }
+            - { type: 'null' }
+        type: { $ref: '#/components/schemas/AccountType' }
+        openingBalance: { $ref: '#/components/schemas/Money' }
+        openingDate: { type: string, format: date }
+    Account:
+      type: object
+      additionalProperties: false
+      required: [id, institutionId, name, type, currency, openingBalance, openingDate, status, createdAt, updatedAt, archivedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        institutionId:
+          oneOf:
+            - { $ref: '#/components/schemas/Id' }
+            - { type: 'null' }
+        name: { type: string }
+        type: { $ref: '#/components/schemas/AccountType' }
+        currency: { type: string, const: MXN }
+        openingBalance: { $ref: '#/components/schemas/Money' }
+        openingDate: { type: string, format: date }
+        status: { $ref: '#/components/schemas/AccountStatus' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        archivedAt: { type: [string, 'null'], format: date-time }
+    TransactionType:
+      type: string
+      enum: [income, expense, transfer]
+    TransactionStatus:
+      type: string
+      enum: [active, cancelled]
+    TransactionInput:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type, description, category, amount, destinationAccountId, operationDate]
+          properties:
+            type: { type: string, const: income }
+            description: { type: string, minLength: 1, maxLength: 255 }
+            category: { type: string, minLength: 1, maxLength: 120 }
+            amount: { $ref: '#/components/schemas/PositiveMoney' }
+            destinationAccountId: { $ref: '#/components/schemas/Id' }
+            operationDate: { type: string, format: date }
+        - type: object
+          additionalProperties: false
+          required: [type, description, category, amount, sourceAccountId, operationDate]
+          properties:
+            type: { type: string, const: expense }
+            description: { type: string, minLength: 1, maxLength: 255 }
+            category: { type: string, minLength: 1, maxLength: 120 }
+            amount: { $ref: '#/components/schemas/PositiveMoney' }
+            sourceAccountId: { $ref: '#/components/schemas/Id' }
+            operationDate: { type: string, format: date }
+        - type: object
+          additionalProperties: false
+          required: [type, description, amount, sourceAccountId, destinationAccountId, operationDate]
+          properties:
+            type: { type: string, const: transfer }
+            description: { type: string, minLength: 1, maxLength: 255 }
+            amount: { $ref: '#/components/schemas/PositiveMoney' }
+            sourceAccountId: { $ref: '#/components/schemas/Id' }
+            destinationAccountId: { $ref: '#/components/schemas/Id' }
+            operationDate: { type: string, format: date }
+      description: En transferencias, las cuentas deben ser distintas y pertenecer al usuario.
+    TransactionPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        description: { type: string, minLength: 1, maxLength: 255 }
+        category: { type: string, minLength: 1, maxLength: 120 }
+        amount: { $ref: '#/components/schemas/PositiveMoney' }
+        sourceAccountId: { $ref: '#/components/schemas/Id' }
+        destinationAccountId: { $ref: '#/components/schemas/Id' }
+        operationDate: { type: string, format: date }
+      description: El tipo no cambia; la combinación de cuentas debe seguir siendo válida.
+    Transaction:
+      type: object
+      additionalProperties: false
+      required: [id, type, description, category, amount, sourceAccountId, destinationAccountId, operationDate, status, cancellationReason, registeredAt, updatedAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        type: { $ref: '#/components/schemas/TransactionType' }
+        description: { type: string }
+        category: { type: [string, 'null'] }
+        amount: { $ref: '#/components/schemas/PositiveMoney' }
+        sourceAccountId:
+          oneOf:
+            - { $ref: '#/components/schemas/Id' }
+            - { type: 'null' }
+        destinationAccountId:
+          oneOf:
+            - { $ref: '#/components/schemas/Id' }
+            - { type: 'null' }
+        operationDate: { type: string, format: date }
+        status: { $ref: '#/components/schemas/TransactionStatus' }
+        cancellationReason: { type: [string, 'null'] }
+        registeredAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [id, transactionId, actorUserId, action, changes, occurredAt]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        transactionId: { $ref: '#/components/schemas/Id' }
+        actorUserId: { $ref: '#/components/schemas/Id' }
+        action: { type: string, enum: [created, updated, cancelled, restored, removed] }
+        reason: { type: [string, 'null'] }
+        changes:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, previousValue, newValue]
+            properties:
+              field: { type: string }
+              previousValue: { type: [string, 'null'] }
+              newValue: { type: [string, 'null'] }
+        occurredAt: { type: string, format: date-time }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object, additionalProperties: true }
